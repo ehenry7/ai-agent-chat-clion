@@ -6,7 +6,7 @@ const MAX_FILE_SIZE_BYTES = 50 * 1024; // Individual file skip limit (50KB)
 const MAX_BUNDLE_SIZE_BYTES = 40 * 1024; // Target split size for markdown parts (40KB)
 
 const EXCLUDED_DIRS = ['build', '.gradle', '.idea', '.git', 'node_modules', 'out'];
-const INCLUDED_EXTENSIONS = ['.kt', '.java', '.kts', '.xml', '.properties', '.json', '.md'];
+const INCLUDED_EXTENSIONS = ['.kt', '.java', '.kts', '.xml', '.properties', '.json'];
 
 function shouldProcess(filePath) {
     const ext = path.extname(filePath);
@@ -57,11 +57,11 @@ function generateBundle() {
         if (currentSize + snippetSize > MAX_BUNDLE_SIZE_BYTES) {
             stream.end();
             console.log(`Part ${partIndex} complete.`);
-            
+
             partIndex++;
             outputFileName = `project-bundle-part${partIndex}.md`;
             console.log(`Writing to ${outputFileName}...`);
-            
+
             stream = fs.createWriteStream(outputFileName, 'utf8');
             currentSize = 0;
 
