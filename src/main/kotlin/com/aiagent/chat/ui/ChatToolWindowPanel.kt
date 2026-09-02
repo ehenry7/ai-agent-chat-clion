@@ -27,6 +27,7 @@ import com.intellij.util.ui.JBUI
 import kotlinx.coroutines.*
 import java.awt.BorderLayout
 import java.awt.CardLayout
+import java.awt.FlowLayout
 import java.awt.GridBagConstraints
 import java.awt.event.KeyAdapter
 import java.awt.event.KeyEvent
@@ -68,17 +69,7 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                 pendingSteerMessages.add(text)
             }
         },
-        onStop = {
-            activeEngineJob?.cancel()
-            activeStreamingPanel?.let { panel ->
-                panel.finalize()
-                activeStreamingPanel = null
-            }
-            SwingUtilities.invokeLater {
-                statusLabel.text = "Stopped"
-                enhancedInputPanel.updateRunningState(false)
-            }
-        },
+        onStop = { handleStop() },
         isRunning = { activeEngineJob?.isActive == true },
         currentModel = { settings.state.model },
         onModelChange = { newModel ->
@@ -453,6 +444,21 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
         card.add(titleLabel, BorderLayout.NORTH)
         card.add(body, BorderLayout.CENTER)
         return card
+    }
+
+    /**
+     * Handles the Stop button — cancels the running agent and cleans up UI.
+     */
+    private fun handleStop() {
+        activeEngineJob?.cancel()
+        activeStreamingPanel?.let { panel ->
+            panel.finalize()
+            activeStreamingPanel = null
+        }
+        SwingUtilities.invokeLater {
+            statusLabel.text = "Stopped"
+            enhancedInputPanel.updateRunningState(false)
+        }
     }
 
     private fun executePrompt(promptText: String) {

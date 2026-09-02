@@ -10,6 +10,7 @@ import com.intellij.ui.components.JBPanel
 import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
 import java.awt.CardLayout
+import java.awt.Dimension
 import java.awt.FlowLayout
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
@@ -134,8 +135,10 @@ class ConversationTabPanel : JBPanel<ConversationTabPanel>(BorderLayout()) {
     fun closeConversation(tabId: String) {
         if (conversations.size <= 1) return // Keep at least one tab
 
-        conversations.remove(tabId)
-        contentPanel.remove(tabId)
+        val conv = conversations.remove(tabId)
+        if (conv != null) {
+            contentPanel.remove(conv.scrollPane)
+        }
 
         // Remove tab button
         for (component in tabBar.components.toList()) {

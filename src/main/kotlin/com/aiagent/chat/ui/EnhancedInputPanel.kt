@@ -260,7 +260,7 @@ class EnhancedInputPanel(
         }
     }
 
-    fun requestFocus() {
+    override fun requestFocus() {
         inputArea.requestFocusInWindow()
     }
 

@@ -2,6 +2,7 @@ package com.aiagent.chat.agent
 
 import com.aiagent.chat.model.*
 import com.aiagent.chat.net.ApiClient
+import com.aiagent.chat.net.StreamChunk
 import kotlinx.coroutines.*
 import kotlinx.serialization.json.*
 

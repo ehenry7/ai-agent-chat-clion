@@ -7,6 +7,7 @@ import com.intellij.ui.components.JBPanel
 import com.intellij.ui.components.JBTextArea
 import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
+import java.awt.Dimension
 import java.awt.FlowLayout
 import javax.swing.*
 
@@ -90,7 +91,7 @@ class ToolApprovalPanel(
             border = JBUI.Borders.empty(4, 0, 0, 0)
         }
 
-        val acceptBtn = JButton("Accept", AllIcons.Actions.Check).apply {
+        val acceptBtn = JButton("Accept", AllIcons.Actions.Checked).apply {
             toolTipText = "Approve this operation"
             cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
             addActionListener {
