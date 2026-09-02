@@ -73,7 +73,6 @@ object DiffEngine {
                     bestMatchIndex = leftIndex
                     bestMatchContent = chunk
                 }
-                leftIndex--
             }
             if (rightIndex <= endIndex - searchLen && rightIndex + searchLen <= lines.size) {
                 val chunk = lines.subList(rightIndex, rightIndex + searchLen).joinToString("\n")
@@ -84,6 +83,14 @@ object DiffEngine {
                     bestMatchContent = chunk
                 }
                 rightIndex++
+            }
+            // Always advance leftIndex to prevent infinite loop when leftIndex + searchLen > lines.size
+            if (leftIndex >= startIndex) {
+                leftIndex--
+            }
+            // Break if both pointers are exhausted
+            if (leftIndex < startIndex && rightIndex > endIndex - searchLen) {
+                break
             }
         }
         return Triple(bestScore, bestMatchIndex, bestMatchContent)

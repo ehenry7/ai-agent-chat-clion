@@ -88,8 +88,14 @@ object PatchEngine {
     }
 
     fun applyChunksToContent(original: String, chunks: List<UpdateFileChunk>): String {
+        val lineEnding = if (original.contains("\r\n")) "\r\n" else "\n"
         val lines = original.split(Regex("\\r?\\n")).toMutableList()
         for (chunk in chunks) {
+            if (chunk.isEndOfFile) {
+                // Append new lines to the end of the file
+                lines.addAll(chunk.newLines)
+                continue
+            }
             val searchBlock = chunk.oldLines.joinToString("\n")
             val replaceBlock = chunk.newLines.joinToString("\n")
             val text = lines.joinToString("\n")
@@ -101,6 +107,6 @@ object PatchEngine {
                 lines.addAll(chunk.newLines)
             }
         }
-        return lines.joinToString("\n")
+        return lines.joinToString(lineEnding)
     }
 }

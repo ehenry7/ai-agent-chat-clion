@@ -30,9 +30,22 @@ class PlatformToolHandler(
     val getGlobalMemory: () -> String,
     val setGlobalMemory: (String) -> Unit,
     val getTodoList: () -> List<com.aiagent.chat.model.TodoItem>,
-    val setTodoList: (List<com.aiagent.chat.model.TodoItem>) -> Unit
+    val setTodoList: (List<com.aiagent.chat.model.TodoItem>) -> Unit,
+    val approvalHandler: ApprovalHandler? = null
 ) {
     private val httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(15)).build()
+
+    /**
+     * Interface for non-blocking tool approval.
+     * The UI implements this to show inline approval panels.
+     */
+    interface ApprovalHandler {
+        fun requestApproval(toolName: String, toolArgs: String): ApprovalResult
+    }
+
+    data class ApprovalResult(val approved: Boolean, val autoApproveSession: Boolean)
+
+    private val autoApprovedTools = mutableSetOf<String>()
 
     fun resolveContainedFile(relPath: String): File {
         val baseDir = File(project.basePath ?: throw IllegalStateException("No project base path"))
@@ -140,6 +153,21 @@ class PlatformToolHandler(
     }
 
     fun runCommand(command: String): String {
+        // S2: Basic command sanitization — block dangerous patterns
+        val dangerousPatterns = listOf(
+            Regex("rm\\s+-rf\\s+/", RegexOption.IGNORE_CASE),
+            Regex("mkfs\\.", RegexOption.IGNORE_CASE),
+            Regex("dd\\s+if=", RegexOption.IGNORE_CASE),
+            Regex(":\\(\\)\\s*\\{.*\\}\\s*;\\s*:", RegexOption.IGNORE_CASE), // fork bomb
+            Regex("shutdown", RegexOption.IGNORE_CASE),
+            Regex("reboot", RegexOption.IGNORE_CASE)
+        )
+        for (pattern in dangerousPatterns) {
+            if (pattern.containsMatchIn(command)) {
+                return "Error: Command blocked by security policy (matched: ${pattern.pattern})"
+            }
+        }
+
         val isWindows = System.getProperty("os.name").lowercase().contains("win")
         val cmd = if (isWindows) {
             GeneralCommandLine("powershell.exe", "-NoProfile", "-Command", command)
@@ -161,7 +189,28 @@ class PlatformToolHandler(
     }
 
     fun fetchUrl(urlStr: String): String {
-        val req = HttpRequest.newBuilder().uri(URI.create(urlStr)).timeout(Duration.ofSeconds(15)).GET().build()
+        // S2: Validate URL scheme to prevent SSRF and file:// access
+        val uri = try {
+            URI.create(urlStr)
+        } catch (_: Exception) {
+            return "Error: Invalid URL format"
+        }
+        val scheme = uri.scheme?.lowercase()
+        if (scheme != "http" && scheme != "https") {
+            return "Error: Only http and https URLs are allowed (got: $scheme)"
+        }
+        // Block localhost and private IP ranges to prevent SSRF
+        val host = uri.host
+        if (host != null) {
+            val isLocalhost = host == "localhost" || host == "127.0.0.1" || host == "::1" || host == "0.0.0.0"
+            val isPrivate = host.startsWith("10.") || host.startsWith("172.16.") || host.startsWith("172.17.") ||
+                    host.startsWith("172.18.") || host.startsWith("172.19.") || host.startsWith("172.2") ||
+                    host.startsWith("172.3") || host.startsWith("192.168.") || host.startsWith("169.254.")
+            if (isLocalhost || isPrivate) {
+                return "Error: Access to localhost and private IP ranges is blocked for security"
+            }
+        }
+        val req = HttpRequest.newBuilder().uri(uri).timeout(Duration.ofSeconds(15)).GET().build()
         val res = httpClient.send(req, HttpResponse.BodyHandlers.ofString())
         return res.body().take(100000)
     }
@@ -220,18 +269,27 @@ class PlatformToolHandler(
 
     fun execute(name: String, args: JsonObject): String {
         val mutatingTools = setOf("write_file", "edit_file", "run_command", "run_python", "apply_patch", "apply_diff", "git_commit")
-        if (mutatingTools.contains(name)) {
-            var approved = false
-            ApplicationManager.getApplication().invokeAndWait {
-                val res = Messages.showYesNoDialog(
-                    project,
-                    "Agent wants to execute $name.\nArgs: $args\n\nAllow this operation?",
-                    "Tool Execution Request",
-                    Messages.getQuestionIcon()
-                )
-                approved = (res == Messages.YES)
+        if (mutatingTools.contains(name) && !autoApprovedTools.contains(name)) {
+            if (approvalHandler != null) {
+                val result = approvalHandler.requestApproval(name, args.toString())
+                if (!result.approved) return "Execution rejected by user."
+                if (result.autoApproveSession) {
+                    autoApprovedTools.add(name)
+                }
+            } else {
+                // Fallback: blocking dialog (legacy behavior)
+                var approved = false
+                ApplicationManager.getApplication().invokeAndWait {
+                    val res = Messages.showYesNoDialog(
+                        project,
+                        "Agent wants to execute $name.\nArgs: $args\n\nAllow this operation?",
+                        "Tool Execution Request",
+                        Messages.getQuestionIcon()
+                    )
+                    approved = (res == Messages.YES)
+                }
+                if (!approved) return "Execution rejected by user."
             }
-            if (!approved) return "Execution rejected by user."
         }
 
         return when (name) {
@@ -287,12 +345,16 @@ class PlatformToolHandler(
                 for (hunk in hunks) {
                     when (hunk) {
                         is PatchEngine.Hunk.AddFile -> writeFile(hunk.path, hunk.contents)
-                        is PatchEngine.Hunk.DeleteFile -> resolveContainedFile(hunk.path).delete()
+                        is PatchEngine.Hunk.DeleteFile -> {
+                            val f = resolveContainedFile(hunk.path)
+                            if (f.exists()) f.delete()
+                        }
                         is PatchEngine.Hunk.UpdateFile -> {
-                            val orig = readFile(hunk.path)
+                            val file = resolveContainedFile(hunk.path)
+                            val orig = if (file.exists()) file.readText(StandardCharsets.UTF_8) else ""
                             val updated = PatchEngine.applyChunksToContent(orig, hunk.chunks)
                             writeFile(hunk.movePath ?: hunk.path, updated)
-                            if (hunk.movePath != null) resolveContainedFile(hunk.path).delete()
+                            if (hunk.movePath != null && file.exists()) file.delete()
                         }
                     }
                 }
@@ -361,8 +423,24 @@ class PlatformToolHandler(
                                 putJsonObject("path") { put("type", "string") }
                                 putJsonObject("search") { put("type", "string") }
                                 putJsonObject("replace") { put("type", "string") }
+                                putJsonObject("replaceAll") { put("type", "boolean") }
                             }
                             putJsonArray("required") { add("path"); add("search"); add("replace") }
+                        }
+                    )
+                ),
+                ToolDefinition(
+                    function = ToolFunctionDef(
+                        name = "read_file_lines",
+                        description = "Read specific line range from a file",
+                        parameters = buildJsonObject {
+                            put("type", "object")
+                            putJsonObject("properties") {
+                                putJsonObject("path") { put("type", "string") }
+                                putJsonObject("startLine") { put("type", "integer") }
+                                putJsonObject("endLine") { put("type", "integer") }
+                            }
+                            putJsonArray("required") { add("path"); add("startLine"); add("endLine") }
                         }
                     )
                 ),
@@ -406,6 +484,93 @@ class PlatformToolHandler(
                 ),
                 ToolDefinition(
                     function = ToolFunctionDef(
+                        name = "find_files",
+                        description = "Find files matching a glob pattern in the workspace",
+                        parameters = buildJsonObject {
+                            put("type", "object")
+                            putJsonObject("properties") {
+                                putJsonObject("glob") { put("type", "string") }
+                            }
+                            putJsonArray("required") { add("glob") }
+                        }
+                    )
+                ),
+                ToolDefinition(
+                    function = ToolFunctionDef(
+                        name = "search_in_files",
+                        description = "Search for text or regex pattern in workspace files",
+                        parameters = buildJsonObject {
+                            put("type", "object")
+                            putJsonObject("properties") {
+                                putJsonObject("query") { put("type", "string") }
+                                putJsonObject("isRegex") { put("type", "boolean") }
+                            }
+                            putJsonArray("required") { add("query") }
+                        }
+                    )
+                ),
+                ToolDefinition(
+                    function = ToolFunctionDef(
+                        name = "fetch_url",
+                        description = "Fetch content from a URL via HTTP GET (max 100KB response)",
+                        parameters = buildJsonObject {
+                            put("type", "object")
+                            putJsonObject("properties") {
+                                putJsonObject("url") { put("type", "string") }
+                            }
+                            putJsonArray("required") { add("url") }
+                        }
+                    )
+                ),
+                ToolDefinition(
+                    function = ToolFunctionDef(
+                        name = "web_search",
+                        description = "Search the web and return results",
+                        parameters = buildJsonObject {
+                            put("type", "object")
+                            putJsonObject("properties") {
+                                putJsonObject("query") { put("type", "string") }
+                            }
+                            putJsonArray("required") { add("query") }
+                        }
+                    )
+                ),
+                ToolDefinition(
+                    function = ToolFunctionDef(
+                        name = "git_status",
+                        description = "Show git working tree status (porcelain format)",
+                        parameters = buildJsonObject { put("type", "object") }
+                    )
+                ),
+                ToolDefinition(
+                    function = ToolFunctionDef(
+                        name = "git_diff",
+                        description = "Show unstaged changes in the working tree",
+                        parameters = buildJsonObject { put("type", "object") }
+                    )
+                ),
+                ToolDefinition(
+                    function = ToolFunctionDef(
+                        name = "git_log",
+                        description = "Show recent git commit history (last 5 commits)",
+                        parameters = buildJsonObject { put("type", "object") }
+                    )
+                ),
+                ToolDefinition(
+                    function = ToolFunctionDef(
+                        name = "git_commit",
+                        description = "Stage all changes and create a git commit",
+                        parameters = buildJsonObject {
+                            put("type", "object")
+                            putJsonObject("properties") {
+                                putJsonObject("message") { put("type", "string") }
+                            }
+                            putJsonArray("required") { add("message") }
+                        }
+                    )
+                ),
+                ToolDefinition(
+                    function = ToolFunctionDef(
                         name = "apply_diff",
                         description = "Apply SEARCH/REPLACE diff blocks to a file",
                         parameters = buildJsonObject {
@@ -420,6 +585,19 @@ class PlatformToolHandler(
                 ),
                 ToolDefinition(
                     function = ToolFunctionDef(
+                        name = "apply_patch",
+                        description = "Apply a multi-file patch (add/delete/update files)",
+                        parameters = buildJsonObject {
+                            put("type", "object")
+                            putJsonObject("properties") {
+                                putJsonObject("patch") { put("type", "string") }
+                            }
+                            putJsonArray("required") { add("patch") }
+                        }
+                    )
+                ),
+                ToolDefinition(
+                    function = ToolFunctionDef(
                         name = "update_todo_list",
                         description = "Update the active task todo checklist",
                         parameters = buildJsonObject {
@@ -428,6 +606,20 @@ class PlatformToolHandler(
                                 putJsonObject("todos") { put("type", "string") }
                             }
                             putJsonArray("required") { add("todos") }
+                        }
+                    )
+                ),
+                ToolDefinition(
+                    function = ToolFunctionDef(
+                        name = "update_memory",
+                        description = "Update persistent agent memory (folder or global scope)",
+                        parameters = buildJsonObject {
+                            put("type", "object")
+                            putJsonObject("properties") {
+                                putJsonObject("content") { put("type", "string") }
+                                putJsonObject("scope") { put("type", "string") }
+                            }
+                            putJsonArray("required") { add("content") }
                         }
                     )
                 ),

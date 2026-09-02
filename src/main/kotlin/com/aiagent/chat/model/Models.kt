@@ -50,7 +50,44 @@ data class ToolDefinition(
 data class ChatCompletionRequest(
     val model: String,
     val messages: List<ChatMessage>,
-    val tools: List<ToolDefinition>? = null
+    val tools: List<ToolDefinition>? = null,
+    val stream: Boolean = false
+)
+
+// --- Streaming models (Phase 9) ---
+
+@Serializable
+data class StreamDelta(
+    val role: String? = null,
+    val content: String? = null,
+    @SerialName("tool_calls") val toolCalls: List<StreamToolCall>? = null
+)
+
+@Serializable
+data class StreamToolCall(
+    val index: Int = 0,
+    val id: String? = null,
+    val type: String? = null,
+    val function: StreamToolCallFunction? = null
+)
+
+@Serializable
+data class StreamToolCallFunction(
+    val name: String? = null,
+    val arguments: String? = null
+)
+
+@Serializable
+data class StreamChoice(
+    val index: Int = 0,
+    val delta: StreamDelta? = null,
+    @SerialName("finish_reason") val finishReason: String? = null
+)
+
+@Serializable
+data class ChatCompletionChunk(
+    val id: String? = null,
+    val choices: List<StreamChoice> = emptyList()
 )
 
 @Serializable
