@@ -1,0 +1,29 @@
+<idea-plugin>
+    <id>com.aiagent.chat</id>
+    <name>AI Agent Chat</name>
+    <vendor>Huawei</vendor>
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.modules.clion</depends>
+    <depends>Git4Idea</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow id="AI Agent Chat"
+                    secondary="true"
+                    anchor="right"
+                    icon="AllIcons.Toolwindows.ToolWindowMessages"
+                    factoryClass="com.aiagent.chat.ui.ChatToolWindowFactory"/>
+        <applicationService serviceImplementation="com.aiagent.chat.services.ChatStateService"/>
+        <configurable instance="com.aiagent.chat.ui.AiAgentChatConfigurable"/>
+        <startupActivity implementation="com.aiagent.chat.listeners.PluginStartupActivity"/>
+    </extensions>
+
+    <actions>
+        <action id="com.aiagent.chat.actions.OpenSettingsAction"
+                class="com.aiagent.chat.actions.OpenSettingsAction"
+                text="AI Agent Chat Settings"
+                description="Open AI Agent Chat settings">
+            <add-to-group group-id="FileMenu" anchor="last"/>
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+    </actions>
+</idea-plugin>

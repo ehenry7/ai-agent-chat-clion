@@ -1,0 +1,72 @@
+plugins {
+    id("java")
+    id("org.jetbrains.kotlin.jvm") version "2.0.20"
+    id("org.jetbrains.kotlin.plugin.serialization") version "2.0.20"
+    id("org.jetbrains.intellij.platform") version "2.0.1"
+}
+
+kotlin {
+    jvmToolchain(21)
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+tasks.withType<JavaCompile>().configureEach {
+    options.isFork = true
+}
+
+group = "com.aiagent.chat"
+version = "0.46.5"
+
+repositories {
+    mavenCentral()
+    intellijPlatform {
+        defaultRepositories()
+    }
+}
+
+dependencies {
+    intellijPlatform {
+        clion("2024.2")
+        bundledPlugin("com.intellij.clion")
+        bundledPlugin("Git4Idea")
+        bundledPlugin("org.intellij.plugins.markdown")
+        instrumentationTools()
+    }
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.1")
+    testImplementation("junit:junit:4.13.2")
+}
+
+kotlin {
+    jvmToolchain(21)
+}
+
+intellijPlatform {
+    pluginConfiguration {
+        id = "com.aiagent.chat"
+        name = "AI Agent Chat"
+        vendor {
+            name = "Huawei"
+            email = "support@huawei.com"
+            url = "https://huawei.com"
+        }
+        description = "Agentic AI chat for OpenAI-compatible APIs with file and shell tools."
+        version = project.version.toString()
+        ideaVersion {
+            sinceBuild = "242.0"
+            untilBuild = "242.*"
+        }
+    }
+    pluginVerification {
+        ides {
+            ide("CL-2024.2")
+        }
+    }
+    publishing {
+        token = providers.environmentVariable("PUBLISH_TOKEN")
+    }
+}

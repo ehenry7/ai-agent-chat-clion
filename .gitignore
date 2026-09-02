@@ -1,0 +1,21 @@
+.gradle/
+build/
+out/
+.idea/
+*.iml
+*.iws
+local.properties
+.DS_Store
+Thumbs.db
+.ai-agent-chat/
+GLOBAL_AGENTS.md
+AGENTS.md
+# Machine & IDE cache artifacts
+.intellijPlatform/
+.codegraph/
+.fixbot-mcp-server/
+.editorconfig
+proxy/
+
+# Scratch files and generated bundles
+project-bundle-*.md
