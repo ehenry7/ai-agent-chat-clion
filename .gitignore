@@ -15,7 +15,9 @@ AGENTS.md
 .codegraph/
 .fixbot-mcp-server/
 .editorconfig
+.proxyai/
 proxy/
 
 # Scratch files and generated bundles
 project-bundle-*.md
+CodeReview.md

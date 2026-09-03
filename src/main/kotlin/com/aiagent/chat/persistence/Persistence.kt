@@ -11,8 +11,9 @@ class PersistenceManager(private val projectRoot: String) {
     private val json = Json { ignoreUnknownKeys = true; prettyPrint = true }
     private val sessionDir = File(projectRoot, ".ai-agent-chat")
     private val sessionFile = File(sessionDir, "session.json")
-    private val memoryFile = File(projectRoot, "AGENTS.md")
-    private val globalMemoryFile = File(System.getProperty("user.home"), ".ai-agent-chat/GLOBAL_AGENTS.md")
+    private val l1SummaryFile = File(sessionDir, "L1_SUMMARY.md") // Rolling Context Summary
+    private val memoryFile = File(projectRoot, "AGENTS.md") // L2 Workspace Rules
+    private val globalMemoryFile = File(System.getProperty("user.home"), ".ai-agent-chat/GLOBAL_AGENTS.md") // L3 Global Rules
 
     init {
         sessionDir.mkdirs()
@@ -37,6 +38,15 @@ class PersistenceManager(private val projectRoot: String) {
 
     fun clearSession() {
         if (sessionFile.exists()) sessionFile.delete()
+        if (l1SummaryFile.exists()) l1SummaryFile.delete()
+    }
+
+    fun loadSummaryMemory(): String {
+        return if (l1SummaryFile.exists()) l1SummaryFile.readText(StandardCharsets.UTF_8) else ""
+    }
+
+    fun saveSummaryMemory(content: String) {
+        l1SummaryFile.writeText(content, StandardCharsets.UTF_8)
     }
 
     fun loadFolderMemory(): String {
