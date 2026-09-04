@@ -44,7 +44,9 @@ data class ChatMessage(
     val content: String? = null,
     val name: String? = null,
     @SerialName("tool_calls") val toolCalls: List<ToolCall>? = null,
-    @SerialName("tool_call_id") val toolCallId: String? = null
+    @SerialName("tool_call_id") val toolCallId: String? = null,
+    /** Token usage from the API response for this assistant message. Null for non-assistant or untracked messages. */
+    val usage: Usage? = null
 )
 
 @Serializable
@@ -129,7 +131,44 @@ data class ChatChoice(
 
 @Serializable
 data class ChatCompletionResponse(
-    val choices: List<ChatChoice>
+    val choices: List<ChatChoice>,
+    val usage: Usage? = null
+)
+
+// --- Token usage tracking (inspired by refact-main's Usage type) ---
+
+@Serializable
+data class Usage(
+    @SerialName("prompt_tokens") val promptTokens: Int = 0,
+    @SerialName("completion_tokens") val completionTokens: Int = 0,
+    @SerialName("total_tokens") val totalTokens: Int = 0,
+    @SerialName("cache_creation_input_tokens") val cacheCreationInputTokens: Int = 0,
+    @SerialName("cache_read_input_tokens") val cacheReadInputTokens: Int = 0
+) {
+    /** Total input/context tokens = prompt + cache creation + cache read. */
+    val totalInputTokens: Int get() = promptTokens + cacheCreationInputTokens + cacheReadInputTokens
+}
+
+/**
+ * Token breakdown segment — one category of token usage within the context window.
+ * Mirrors refact-main's TokenMapSegment.
+ */
+data class TokenMapSegment(
+    val label: String,
+    val category: String,  // "system", "user_messages", "assistant_messages", "tool_results", "free"
+    val tokens: Int,
+    val percentage: Double
+)
+
+/**
+ * Complete token map — breakdown of all tokens in the context window.
+ * Mirrors refact-main's TokenMap.
+ */
+data class TokenMap(
+    val totalPromptTokens: Int,
+    val maxContextTokens: Int,
+    val segments: List<TokenMapSegment>,
+    val topItems: List<TokenMapSegment> = emptyList()
 )
 
 @Serializable

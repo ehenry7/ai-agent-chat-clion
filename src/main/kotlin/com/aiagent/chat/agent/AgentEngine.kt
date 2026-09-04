@@ -29,6 +29,8 @@ sealed interface AgentDelta {
     data class QueueUpdate(val pendingCommands: Int, val queueContents: List<String>) : AgentDelta
     /** Context compaction event — emitted when the conversation history is being compacted. */
     data class CompactionNotice(val message: String, val messagesBefore: Int, val messagesAfter: Int) : AgentDelta
+    /** Token usage update — emitted after each API response with usage data. */
+    data class UsageUpdate(val usage: com.aiagent.chat.model.Usage) : AgentDelta
 }
 
 class AgentEngine(
@@ -612,7 +614,10 @@ class AgentEngine(
             val messagesForApi = compressed + ephemeral
             DebugLog.info("AgentEngine", "Sending ${messagesForApi.size} messages to API, ${tools.size} tools (compaction attempts: $compactionAttempts)")
             try {
-                return client.chat(messagesForApi, tools)
+                val response = client.chat(messagesForApi, tools)
+                // Emit usage update if the response contains usage data
+                response.usage?.let { onDelta(AgentDelta.UsageUpdate(it)) }
+                return response
             } catch (e: ContextLimitException) {
                 compactionAttempts++
                 if (compactionAttempts > MAX_COMPACTION_RETRIES || contextCompactor == null) {

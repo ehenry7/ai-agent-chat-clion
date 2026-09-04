@@ -7,12 +7,14 @@ import com.aiagent.chat.agent.AgentSessionState
 import com.aiagent.chat.agent.CommandQueue
 import com.aiagent.chat.agent.ContextCompactor
 import com.aiagent.chat.agent.SessionStateMachine
+import com.aiagent.chat.agent.UsageTracker
 import com.aiagent.chat.debug.DebugLog
 import com.aiagent.chat.model.ChatMessage
 import com.aiagent.chat.model.MessageRole
 import com.aiagent.chat.model.SessionState
 import com.aiagent.chat.model.TodoItem
 import com.aiagent.chat.model.ToolCategory
+import com.aiagent.chat.model.Usage
 import com.aiagent.chat.model.UiLogEntry
 import com.aiagent.chat.net.ApiClient
 import com.aiagent.chat.persistence.PersistenceManager
@@ -99,6 +101,10 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
     // --- State machine + command queue (agent-improvements) ---
     private val stateMachine = SessionStateMachine()
     private val commandQueue = CommandQueue()
+
+    // --- Usage tracking (context/token/memory summary UI) ---
+    private val usageTracker = UsageTracker(maxContextTokens = 32768)
+    private val usageCounterPanel = UsageCounterPanel(maxContextTokens = 32768)
 
     private var todoList: List<TodoItem> = emptyList()
     private val pendingSteerMessages = java.util.concurrent.ConcurrentLinkedQueue<String>()
@@ -390,6 +396,7 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                 JBUI.Borders.empty(2, 8)
             )
             add(statusLabel, BorderLayout.WEST)
+            add(usageCounterPanel, BorderLayout.EAST)
         }
         container.add(statusBar, BorderLayout.NORTH)
 
@@ -491,6 +498,39 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
         }
     }
 
+    /**
+     * Add an arbitrary Swing component to the active conversation's message container.
+     * Used for summarization event panels and other non-message UI elements.
+     */
+    private fun addComponentToActiveTab(component: JComponent) {
+        val targetConversationId = activeConversationId ?: conversationTabPanel.getActiveTabId()
+        val activeConv = targetConversationId?.let { conversationTabPanel.getConversation(it) } ?: conversationTabPanel.getActiveConversation()
+        if (activeConv == null) return
+
+        activeConv.messageContainer.remove(activeConv.fillerComponent)
+
+        val constraints = GridBagConstraints().apply {
+            gridx = 0
+            gridy = activeConv.currentRow++
+            weightx = 1.0
+            weighty = 0.0
+            fill = GridBagConstraints.HORIZONTAL
+            anchor = GridBagConstraints.NORTH
+            insets = JBUI.insets(6, 8, 6, 8)
+        }
+
+        activeConv.messageContainer.add(component, constraints)
+        activeConv.fillerGbc.gridy = activeConv.currentRow
+        activeConv.messageContainer.add(activeConv.fillerComponent, activeConv.fillerGbc)
+        activeConv.messageContainer.revalidate()
+        activeConv.messageContainer.repaint()
+
+        SwingUtilities.invokeLater {
+            val scrollBar = activeConv.scrollPane.verticalScrollBar
+            scrollBar.value = scrollBar.maximum
+        }
+    }
+
     private fun createErrorPanel(errorText: String): JComponent {
         val card = JPanel(BorderLayout()).apply {
             border = JBUI.Borders.compound(
@@ -548,9 +588,11 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
         }
         activeConversationId = null
         stateMachine.reset()
+        usageTracker.reset()
         SwingUtilities.invokeLater {
             statusLabel.text = "Stopped"
             enhancedInputPanel.updateRunningState(false)
+            usageCounterPanel.updateUsage(usageTracker.computeSummary(emptyList()))
         }
     }
 
@@ -657,10 +699,28 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                         }
                         is AgentDelta.CompactionNotice -> {
                             DebugLog.info("ChatToolWindow", "Compaction: ${delta.message} (${delta.messagesBefore} -> ${delta.messagesAfter} messages)")
+                            usageTracker.recordCompaction(delta.messagesBefore, delta.messagesAfter)
                             SwingUtilities.invokeLater {
                                 statusLabel.text = "Context compacted: ${delta.messagesBefore} -> ${delta.messagesAfter} messages"
                             }
                             addMessageBubbleToActiveTab("system", delta.message)
+                            // Also add a summarization event panel to the chat
+                            SwingUtilities.invokeLater {
+                                val event = UsageTracker.CompactionEvent(delta.messagesBefore, delta.messagesAfter,
+                                    (delta.messagesBefore - delta.messagesAfter) * 500)
+                                addComponentToActiveTab(SummarizationEventPanel(event))
+                            }
+                        }
+                        is AgentDelta.UsageUpdate -> {
+                            DebugLog.info("ChatToolWindow", "Usage update: prompt=${delta.usage.promptTokens}, completion=${delta.usage.completionTokens}")
+                            usageTracker.recordUsage(delta.usage)
+                            // Update the usage counter panel with the latest summary
+                            val activeConv = activeConversationId?.let { conversationTabPanel.getConversation(it) } ?: conversationTabPanel.getActiveConversation()
+                            val allMessages = activeConv?.history?.toList() ?: emptyList()
+                            val summary = usageTracker.computeSummary(allMessages)
+                            SwingUtilities.invokeLater {
+                                usageCounterPanel.updateUsage(summary)
+                            }
                         }
                     }
                 },

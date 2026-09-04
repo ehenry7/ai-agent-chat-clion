@@ -141,8 +141,14 @@ class ApiClient(
 
         val parsed = json.decodeFromString<ChatCompletionResponse>(respBody)
         DebugLog.info("ApiClient", "Non-streaming response received, ${parsed.choices.size} choices")
-        return parsed.choices.firstOrNull()?.message
+        val message = parsed.choices.firstOrNull()?.message
             ?: throw ApiException(status, "Malformed API response: no choices returned")
+        // Attach usage data if present
+        if (parsed.usage != null) {
+            DebugLog.info("ApiClient", "Usage: prompt=${parsed.usage.promptTokens}, completion=${parsed.usage.completionTokens}, total=${parsed.usage.totalTokens}")
+            return message.copy(usage = parsed.usage)
+        }
+        return message
     }
 
     /**
