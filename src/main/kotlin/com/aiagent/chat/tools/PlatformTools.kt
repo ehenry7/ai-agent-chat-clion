@@ -32,7 +32,8 @@ class PlatformToolHandler(
     val setGlobalMemory: (String) -> Unit,
     val getTodoList: () -> List<com.aiagent.chat.model.TodoItem>,
     val setTodoList: (List<com.aiagent.chat.model.TodoItem>) -> Unit,
-    val approvalHandler: ApprovalHandler? = null
+    val approvalHandler: ApprovalHandler? = null,
+    var approvalMode: com.aiagent.chat.model.ApprovalMode = com.aiagent.chat.model.ApprovalMode.BALANCED
 ) {
     private val httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(15)).build()
 
@@ -283,7 +284,7 @@ class PlatformToolHandler(
 
     fun execute(name: String, args: JsonObject): String {
         val category = getToolCategory(name)
-        val requiresApproval = category != ToolCategory.READ_ONLY && !autoApprovedTools.contains(name)
+        val requiresApproval = approvalMode.requiresApproval(category) && !autoApprovedTools.contains(name)
 
         if (requiresApproval) {
             if (approvalHandler != null) {

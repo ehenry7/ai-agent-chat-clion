@@ -115,9 +115,6 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
 
     private var activeStreamingPanel: StreamingResponsePanel? = null
 
-    // Track pending tool approval call ID for routing user decisions
-    private var pendingToolCallId: String? = null
-
     private val toolHandler = PlatformToolHandler(
         project = project,
         getMemory = { persistence.loadFolderMemory() },
@@ -179,7 +176,8 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
 
                 return result
             }
-        }
+        },
+        approvalMode = approvalMode
     )
 
     init {
@@ -191,6 +189,7 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
         } catch (_: Exception) {
             ApprovalMode.BALANCED
         }
+        toolHandler.approvalMode = approvalMode
 
         conversationTabPanel.onTabChanged = { _ -> }
 
@@ -356,6 +355,7 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                 isSelected = mode == approvalMode
                 addActionListener {
                     approvalMode = mode
+                    toolHandler.approvalMode = mode
                     settings.state.approvalMode = mode.name
                     DebugLog.info("ChatToolWindow", "Approval mode changed to: ${mode.name}")
                     statusLabel.text = "Approval: ${mode.displayName}"
@@ -721,10 +721,6 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                                 statusLabel.text = "${delta.to.name.lowercase().replaceFirstChar { it.uppercase() }}: ${delta.reason}"
                             }
                         }
-                        is AgentDelta.ToolApprovalRequest -> {
-                            DebugLog.info("ChatToolWindow", "Tool approval request: ${delta.toolName} (${delta.category})")
-                            pendingToolCallId = delta.toolCallId
-                        }
                         is AgentDelta.QueueUpdate -> {
                             DebugLog.info("ChatToolWindow", "Queue update: ${delta.pendingCommands} pending commands")
                         }
@@ -756,8 +752,7 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                     }
                 },
                 stateMachine = stateMachine,
-                commandQueue = commandQueue,
-                approvalMode = approvalMode
+                commandQueue = commandQueue
             )
 
             try {

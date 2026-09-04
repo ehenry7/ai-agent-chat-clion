@@ -2,7 +2,6 @@ package com.aiagent.chat.agent
 
 import com.aiagent.chat.debug.DebugLog
 import com.aiagent.chat.model.*
-import com.aiagent.chat.model.ApprovalMode
 import com.aiagent.chat.net.ApiClient
 import com.aiagent.chat.net.ContextLimitException
 import com.aiagent.chat.net.StreamChunk
@@ -24,8 +23,6 @@ sealed interface AgentDelta {
     data class StreamingEnd(val fullText: String) : AgentDelta
     /** State machine transition — emitted whenever the session state changes. */
     data class StateChange(val from: AgentSessionState, val to: AgentSessionState, val reason: String) : AgentDelta
-    /** Tool approval request — emitted when a tool needs user approval. */
-    data class ToolApprovalRequest(val toolCallId: String, val toolName: String, val toolArgs: String, val category: ToolCategory) : AgentDelta
     /** Command queue update — emitted when the queue contents change. */
     data class QueueUpdate(val pendingCommands: Int, val queueContents: List<String>) : AgentDelta
     /** Context compaction event — emitted when the conversation history is being compacted. */
@@ -40,8 +37,7 @@ class AgentEngine(
     private val onDelta: (AgentDelta) -> Unit,
     private val stateMachine: SessionStateMachine = SessionStateMachine(),
     private val commandQueue: CommandQueue = CommandQueue(),
-    private val contextCompactor: ContextCompactor? = null,
-    private val approvalMode: ApprovalMode = ApprovalMode.BALANCED
+    private val contextCompactor: ContextCompactor? = null
 ) {
     companion object {
         const val RECENT_WINDOW_MESSAGES = 8
@@ -87,9 +83,9 @@ class AgentEngine(
      *
      * Key improvements over the original:
      * 1. Explicit state transitions (IDLE -> GENERATING -> EXECUTING_TOOLS -> PAUSED -> COMPLETED)
-     * 2. Command queue for steering, abort, and tool decisions
+     * 2. Command queue for steering and abort
      * 3. Abort checking between API calls and tool executions
-     * 4. Tool approval via CompletableDeferred (non-blocking, with deny reasons)
+     * 4. Tool approval handled by PlatformToolHandler (single gate, driven by ApprovalMode)
      * 5. Steering from both the command queue and the legacy steerProvider
      */
     suspend fun runAgentLoopStreaming(
@@ -258,56 +254,6 @@ class AgentEngine(
                         messages.add(toolMsg)
                         newMessages.add(toolMsg)
                         continue
-                    }
-
-                    // --- Tool approval via command queue ---
-                    val category = getToolCategoryForApproval(funcName)
-                    if (approvalMode.requiresApproval(category)) {
-                        // Emit approval request to UI
-                        onDelta(AgentDelta.ToolApprovalRequest(call.id, funcName, parsedArgs.toString(), category))
-
-                        // Pause state machine while waiting for approval
-                        stateMachine.pause("Tool approval required: $funcName (category: $category)")
-
-                        // Create a deferred and wait for user decision
-                        val deferred = commandQueue.createToolDecisionPending()
-                        val decision = try {
-                            deferred.await()
-                        } catch (e: CancellationException) {
-                            DebugLog.info("AgentEngine", "Tool approval cancelled (likely abort)")
-                            commandQueue.clearToolDecisionPending()
-                            stateMachine.transitionTo(AgentSessionState.COMPLETED, "Cancelled during tool approval")
-                            throw e
-                        }
-
-                        commandQueue.clearToolDecisionPending()
-
-                        // Resume state machine
-                        stateMachine.resume("User decision: ${if (decision.acceptedToolCallIds.contains(call.id)) "approved" else "denied"}")
-
-                        // Check if this specific tool call was denied
-                        if (!decision.acceptedToolCallIds.contains(call.id)) {
-                            val denyReason = decision.deniedToolCallIds[call.id] ?: "No reason provided"
-                            DebugLog.info("AgentEngine", "Tool $funcName denied by user: $denyReason")
-                            val denyResult = "Tool call denied by user. Reason: $denyReason"
-                            onDelta(AgentDelta.ToolOutput(funcName, denyResult))
-                            val toolMsg = ChatMessage(MessageRole.TOOL, content = denyResult, toolCallId = call.id)
-                            messages.add(toolMsg)
-                            newMessages.add(toolMsg)
-                            continue
-                        }
-
-                        // If auto-approve session is requested, apply it via the tool executor
-                        if (decision.autoApproveSession) {
-                            DebugLog.info("AgentEngine", "Auto-approve session requested for future $funcName calls")
-                        }
-                    }
-
-                    // --- Abort check after approval, before execution ---
-                    if (commandQueue.isAborted()) {
-                        DebugLog.info("AgentEngine", "Abort detected after approval, stopping")
-                        stateMachine.transitionTo(AgentSessionState.COMPLETED, "Aborted by user")
-                        break
                     }
 
                     DebugLog.info("AgentEngine", "Calling tool: $funcName with args: ${parsedArgs.toString().take(100)}")
@@ -516,42 +462,6 @@ class AgentEngine(
                         continue
                     }
 
-                    // --- Tool approval via command queue ---
-                    val category = getToolCategoryForApproval(funcName)
-                    if (approvalMode.requiresApproval(category)) {
-                        onDelta(AgentDelta.ToolApprovalRequest(call.id, funcName, parsedArgs.toString(), category))
-                        stateMachine.pause("Tool approval required: $funcName (category: $category)")
-
-                        val deferred = commandQueue.createToolDecisionPending()
-                        val decision = try {
-                            deferred.await()
-                        } catch (e: CancellationException) {
-                            commandQueue.clearToolDecisionPending()
-                            stateMachine.transitionTo(AgentSessionState.COMPLETED, "Cancelled during tool approval")
-                            throw e
-                        }
-
-                        commandQueue.clearToolDecisionPending()
-                        stateMachine.resume("User decision received")
-
-                        if (!decision.acceptedToolCallIds.contains(call.id)) {
-                            val denyReason = decision.deniedToolCallIds[call.id] ?: "No reason provided"
-                            DebugLog.info("AgentEngine", "Tool $funcName denied by user: $denyReason")
-                            val denyResult = "Tool call denied by user. Reason: $denyReason"
-                            onDelta(AgentDelta.ToolOutput(funcName, denyResult))
-                            val toolMsg = ChatMessage(MessageRole.TOOL, content = denyResult, toolCallId = call.id)
-                            messages.add(toolMsg)
-                            newMessages.add(toolMsg)
-                            continue
-                        }
-                    }
-
-                    // --- Abort check after approval ---
-                    if (commandQueue.isAborted()) {
-                        stateMachine.transitionTo(AgentSessionState.COMPLETED, "Aborted by user")
-                        break
-                    }
-
                     DebugLog.info("AgentEngine", "Calling tool: $funcName with args: ${parsedArgs.toString().take(100)}")
                     val toolResult = try {
                         toolExecutor(funcName, parsedArgs)
@@ -642,14 +552,6 @@ class AgentEngine(
                 }
             }
         }
-    }
-
-    /**
-     * Get the tool category for approval routing.
-     * Delegates to ToolRegistry (single source of truth).
-     */
-    private fun getToolCategoryForApproval(toolName: String): ToolCategory {
-        return ToolRegistry.getCategory(toolName)
     }
 
     private fun buildSystemPrompt(toolNames: List<String>, memory: String, globalMem: String, phase: String): String {
