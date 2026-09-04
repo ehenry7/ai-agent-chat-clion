@@ -44,6 +44,7 @@ class ConversationTabPanel : JBPanel<ConversationTabPanel>(BorderLayout()) {
 
     var onTabChanged: ((String?) -> Unit)? = null
     var onNewTab: (() -> Unit)? = null
+    var onMenuClick: ((java.awt.Component) -> Unit)? = null
 
     init {
         border = JBUI.Borders.empty()
@@ -62,6 +63,9 @@ class ConversationTabPanel : JBPanel<ConversationTabPanel>(BorderLayout()) {
             add(tabScroll, BorderLayout.CENTER)
             val rightButtonsPanel = JPanel(FlowLayout(FlowLayout.RIGHT, 2, 0)).apply {
                 isOpaque = false
+                add(createIconButton(AllIcons.Actions.MoreHorizontal, "Menu") {
+                    onMenuClick?.invoke(it)
+                })
                 add(createIconButton(AllIcons.Actions.New, "New Session") {
                     onNewTab?.invoke()
                 })
@@ -193,7 +197,7 @@ class ConversationTabPanel : JBPanel<ConversationTabPanel>(BorderLayout()) {
     /**
      * Creates a small icon-only button with no border or content fill.
      */
-    private fun createIconButton(icon: Icon, tooltip: String, onClick: () -> Unit): JButton {
+    private fun createIconButton(icon: Icon, tooltip: String, onClick: (java.awt.Component) -> Unit): JButton {
         return JButton(icon).apply {
             toolTipText = tooltip
             isContentAreaFilled = false
@@ -202,7 +206,7 @@ class ConversationTabPanel : JBPanel<ConversationTabPanel>(BorderLayout()) {
             margin = JBUI.insets(2)
             preferredSize = Dimension(24, 24)
             cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
-            addActionListener { onClick() }
+            addActionListener { e -> onClick(e.source as java.awt.Component) }
         }
     }
 

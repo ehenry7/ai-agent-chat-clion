@@ -79,16 +79,6 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
         onModelChange = { newModel -> settings.state.model = newModel }
     )
 
-    // Menu button (replaces separate Settings + Mode buttons)
-    private val menuBtn = JButton(AllIcons.General.Settings).apply {
-        toolTipText = "Menu"
-        isContentAreaFilled = false
-        isBorderPainted = false
-        isFocusPainted = false
-        margin = JBUI.insets(2)
-        preferredSize = Dimension(28, 28)
-        cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
-    }
     private val statusLabel = JBLabel("Ready")
 
     private val baseUrlField = JBTextField()
@@ -208,24 +198,13 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
             todoListPanel.updateItems(emptyList())
         }
 
+        conversationTabPanel.onMenuClick = { source -> showMenuPopup(source) }
+
         val chatPanel = JPanel(BorderLayout())
         chatPanel.background = JBColor.PanelBackground
 
-        // Header bar with "AI Agent Chat" title and menu button on the right
-        val headerBar = JPanel(BorderLayout()).apply {
-            isOpaque = false
-            border = JBUI.Borders.compound(
-                JBUI.Borders.customLine(ThemeUtils.SUBTLE_BORDER, 0, 0, 1, 0),
-                JBUI.Borders.empty(4, 8)
-            )
-            val titleLabel = JBLabel("AI Agent Chat").apply {
-                font = font.deriveFont(java.awt.Font.BOLD, 13f)
-            }
-            add(titleLabel, BorderLayout.WEST)
-            add(menuBtn, BorderLayout.EAST)
-        }
-        chatPanel.add(headerBar, BorderLayout.NORTH)
-
+        // No in-panel header bar — CLion's tool window tab already shows "AI Agent Chat"
+        // from plugin.xml. The menu button lives in the conversation tab bar to save space.
         chatPanel.add(conversationTabPanel, BorderLayout.CENTER)
 
         val bottomPanel = buildBottomPanel()
@@ -330,8 +309,6 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
             } catch (_: Exception) { }
         }
 
-        menuBtn.addActionListener { showMenuPopup() }
-
         ThemeUtils.onThemeChange {
             SwingUtilities.invokeLater {
                 revalidate()
@@ -340,7 +317,7 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
         }
     }
 
-    private fun showMenuPopup() {
+    private fun showMenuPopup(source: java.awt.Component) {
         val popup = JPopupMenu()
 
         val settingsItem = JMenuItem("Settings", AllIcons.General.Settings)
@@ -383,7 +360,7 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
         }
         popup.add(modeItem)
 
-        popup.show(menuBtn, 0, menuBtn.height)
+        popup.show(source, 0, source.height)
     }
 
     private fun buildSetupPanel(): JPanel {
