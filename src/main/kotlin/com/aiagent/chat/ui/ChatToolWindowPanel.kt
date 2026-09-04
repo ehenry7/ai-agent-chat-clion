@@ -5,6 +5,7 @@ import com.aiagent.chat.agent.AgentDelta
 import com.aiagent.chat.agent.AgentEngine
 import com.aiagent.chat.agent.AgentSessionState
 import com.aiagent.chat.agent.CommandQueue
+import com.aiagent.chat.agent.ContextCompactor
 import com.aiagent.chat.agent.SessionStateMachine
 import com.aiagent.chat.debug.DebugLog
 import com.aiagent.chat.model.ChatMessage
@@ -236,18 +237,60 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
         if (!settings.isApiKeySet()) {
             cardLayout.show(this, SETUP_CARD)
         } else {
-            val savedState = persistence.loadSession()
-            if (savedState != null && savedState.uiLog.isNotEmpty()) {
-                val conv = conversationTabPanel.getActiveConversation()
-                if (conv != null) {
-                    conv.history.addAll(savedState.history)
+            // --- Session restore on restart ---
+            // Try to restore multiple saved sessions from the sessions index
+            val sessionsIndex = persistence.loadSessionsIndex()
+            if (sessionsIndex.isNotEmpty()) {
+                // Restore each saved session as a tab
+                var firstRestored = true
+                for (meta in sessionsIndex.sortedBy { it.createdAt }) {
+                    val savedState = persistence.loadSessionById(meta.id)
+                    if (savedState != null && (savedState.history.isNotEmpty() || savedState.uiLog.isNotEmpty())) {
+                        if (!firstRestored) {
+                            conversationTabPanel.newConversation(meta.name)
+                        } else {
+                            // Rename the default "Session 1" tab
+                            conversationTabPanel.renameConversation(
+                                conversationTabPanel.getActiveTabId() ?: "",
+                                meta.name
+                            )
+                            firstRestored = false
+                        }
+                        val conv = conversationTabPanel.getActiveConversation()
+                        if (conv != null) {
+                            conv.history.addAll(savedState.history)
+                            savedState.uiLog.forEach {
+                                addMessageBubbleToActiveTab(it.role, it.text, recordUiLog = false)
+                            }
+                        }
+                        // Restore todo list from the last session
+                        if (savedState.todoList.isNotEmpty()) {
+                            todoList = savedState.todoList
+                            todoListPanel.updateItems(todoList)
+                        }
+                    }
                 }
-                todoList = savedState.todoList
-                todoListPanel.updateItems(todoList)
-                savedState.uiLog.forEach { addMessageBubbleToActiveTab(it.role, it.text, recordUiLog = false) }
-                cardLayout.show(this, CHAT_CARD)
+                if (firstRestored) {
+                    // No sessions were actually restored (all empty), show landing
+                    cardLayout.show(this, LANDING_CARD)
+                } else {
+                    cardLayout.show(this, CHAT_CARD)
+                }
             } else {
-                cardLayout.show(this, LANDING_CARD)
+                // Fallback: try single-session restore (backward compat)
+                val savedState = persistence.loadSession()
+                if (savedState != null && savedState.uiLog.isNotEmpty()) {
+                    val conv = conversationTabPanel.getActiveConversation()
+                    if (conv != null) {
+                        conv.history.addAll(savedState.history)
+                    }
+                    todoList = savedState.todoList
+                    todoListPanel.updateItems(todoList)
+                    savedState.uiLog.forEach { addMessageBubbleToActiveTab(it.role, it.text, recordUiLog = false) }
+                    cardLayout.show(this, CHAT_CARD)
+                } else {
+                    cardLayout.show(this, LANDING_CARD)
+                }
             }
         }
 
@@ -546,6 +589,7 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                     DebugLog.info("AgentEngine", "Tool $name completed, result length: ${result.length}")
                     result
                 },
+                contextCompactor = ContextCompactor(client),
                 onDelta = { delta ->
                     when (delta) {
                         is AgentDelta.Status -> {
@@ -576,6 +620,11 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                         is AgentDelta.StreamingContent -> {
                             activeStreamingPanel?.appendText(delta.text)
                         }
+                        is AgentDelta.StreamingReasoning -> {
+                            // Reasoning/thinking content — display in a distinct style
+                            // For now, append to streaming panel with a prefix marker
+                            activeStreamingPanel?.appendText("[thinking] ${delta.text}")
+                        }
                         is AgentDelta.StreamingEnd -> {
                             if (delta.fullText.isNotBlank()) {
                                 activeStreamingPanel?.let { panel ->
@@ -602,11 +651,16 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                         is AgentDelta.ToolApprovalRequest -> {
                             DebugLog.info("ChatToolWindow", "Tool approval request: ${delta.toolName} (${delta.category})")
                             pendingToolCallId = delta.toolCallId
-                            // The actual approval UI is handled by the PlatformToolHandler's ApprovalHandler
-                            // This delta is for informational/logging purposes
                         }
                         is AgentDelta.QueueUpdate -> {
                             DebugLog.info("ChatToolWindow", "Queue update: ${delta.pendingCommands} pending commands")
+                        }
+                        is AgentDelta.CompactionNotice -> {
+                            DebugLog.info("ChatToolWindow", "Compaction: ${delta.message} (${delta.messagesBefore} -> ${delta.messagesAfter} messages)")
+                            SwingUtilities.invokeLater {
+                                statusLabel.text = "Context compacted: ${delta.messagesBefore} -> ${delta.messagesAfter} messages"
+                            }
+                            addMessageBubbleToActiveTab("system", delta.message)
                         }
                     }
                 },
@@ -634,14 +688,22 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                     steerProvider = { pendingSteerMessages.poll() }
                 )
                 tabHistory.addAll(newMsgs)
-                persistence.saveSession(
-                    SessionState(
-                        history = tabHistory,
-                        uiLog = tabUiLog.toList(),
-                        todoList = todoList,
-                        savedAt = System.currentTimeMillis()
-                    )
+                val now = System.currentTimeMillis()
+                val chatId = activeConversationId ?: "session_${now}"
+                val chatName = conversationTabPanel.getConversation(chatId)?.title ?: "Session"
+                val sessionState = SessionState(
+                    history = tabHistory,
+                    uiLog = tabUiLog.toList(),
+                    todoList = todoList,
+                    savedAt = now,
+                    selectedModel = settings.state.model,
+                    chatId = chatId,
+                    chatName = chatName,
+                    createdAt = targetConv?.let { null } ?: now,
+                    updatedAt = now
                 )
+                persistence.saveSession(sessionState)
+                persistence.saveSessionById(sessionState)
             } catch (e: Exception) {
                 val errorMsg = e.message ?: e::class.simpleName ?: "Unknown error"
                 DebugLog.error("AgentEngine", "Agent loop failed: $errorMsg", e)

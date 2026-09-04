@@ -3,6 +3,7 @@ package com.aiagent.chat.agent
 import com.aiagent.chat.debug.DebugLog
 import com.aiagent.chat.model.*
 import com.aiagent.chat.net.ApiClient
+import com.aiagent.chat.net.ContextLimitException
 import com.aiagent.chat.net.StreamChunk
 import kotlinx.coroutines.*
 import kotlinx.serialization.json.*
@@ -13,6 +14,8 @@ sealed interface AgentDelta {
     data class ToolOutput(val name: String, val text: String) : AgentDelta
     /** Incremental streaming content — emitted token-by-token during SSE streaming. */
     data class StreamingContent(val text: String) : AgentDelta
+    /** Incremental reasoning/thinking content — emitted during SSE streaming when </think>...</think> tags are detected. */
+    data class StreamingReasoning(val text: String) : AgentDelta
     /** Signals the start of a streaming response. */
     data class StreamingStart(val text: String = "") : AgentDelta
     /** Signals the end of a streaming response, with the full accumulated text. */
@@ -23,6 +26,8 @@ sealed interface AgentDelta {
     data class ToolApprovalRequest(val toolCallId: String, val toolName: String, val toolArgs: String, val category: ToolCategory) : AgentDelta
     /** Command queue update — emitted when the queue contents change. */
     data class QueueUpdate(val pendingCommands: Int, val queueContents: List<String>) : AgentDelta
+    /** Context compaction event — emitted when the conversation history is being compacted. */
+    data class CompactionNotice(val message: String, val messagesBefore: Int, val messagesAfter: Int) : AgentDelta
 }
 
 class AgentEngine(
@@ -30,12 +35,14 @@ class AgentEngine(
     private val toolExecutor: suspend (name: String, args: JsonObject) -> String,
     private val onDelta: (AgentDelta) -> Unit,
     private val stateMachine: SessionStateMachine = SessionStateMachine(),
-    private val commandQueue: CommandQueue = CommandQueue()
+    private val commandQueue: CommandQueue = CommandQueue(),
+    private val contextCompactor: ContextCompactor? = null
 ) {
     companion object {
         const val RECENT_WINDOW_MESSAGES = 8
         const val TOOL_COMPRESS_THRESHOLD = 2000
         const val COMPRESSED_TOOL_NOTICE = "[Tool executed successfully. Output compressed for memory preservation.]"
+        const val MAX_COMPACTION_RETRIES = 2
     }
 
     private val mutatingTools = setOf(
@@ -173,25 +180,22 @@ class AgentEngine(
                 ephemeral.add(ChatMessage(MessageRole.SYSTEM, "Current Plan State:\n$it"))
             }
 
-            val compressed = applySemanticSlidingWindow(messages)
-            val messagesForApi = compressed + ephemeral
-
-            DebugLog.info("AgentEngine", "Sending ${messagesForApi.size} messages to API, ${activeTools.size} tools")
-
             // --- State: GENERATING ---
             stateMachine.transitionTo(AgentSessionState.GENERATING, "Step ${step + 1}: requesting LLM response")
 
-            // Use non-streaming mode (more reliable)
-            DebugLog.info("AgentEngine", "Sending non-streaming request to API")
+            // Use non-streaming mode (more reliable) with context compaction support
+            DebugLog.info("AgentEngine", "Sending non-streaming request to API (messages=${messages.size}, tools=${activeTools.size})")
             val assistantResponse = try {
-                client.chat(
-                    messages = messagesForApi,
-                    tools = activeTools
-                )
+                callWithCompaction(messages, activeTools, ephemeral)
             } catch (e: CancellationException) {
                 DebugLog.info("AgentEngine", "API call cancelled (likely abort)")
                 stateMachine.transitionTo(AgentSessionState.COMPLETED, "Cancelled")
                 throw e
+            } catch (e: ContextLimitException) {
+                DebugLog.error("AgentEngine", "Context limit exceeded after max compaction retries")
+                stateMachine.transitionTo(AgentSessionState.ERROR, "Context limit exceeded")
+                onDelta(AgentDelta.Status("[error: context limit exceeded after compaction]"))
+                break
             }
             DebugLog.info("AgentEngine", "Non-streaming response received: ${assistantResponse.content?.take(100) ?: "[no content]"}")
             newMessages.add(assistantResponse)
@@ -443,10 +447,15 @@ class AgentEngine(
             stateMachine.transitionTo(AgentSessionState.GENERATING, "Step ${step + 1}: requesting LLM response")
 
             val assistantResponse = try {
-                client.chat(messagesForApi, activeTools)
+                callWithCompaction(messages, activeTools, ephemeral)
             } catch (e: CancellationException) {
                 stateMachine.transitionTo(AgentSessionState.COMPLETED, "Cancelled")
                 throw e
+            } catch (e: ContextLimitException) {
+                DebugLog.error("AgentEngine", "Context limit exceeded after max compaction retries")
+                stateMachine.transitionTo(AgentSessionState.ERROR, "Context limit exceeded")
+                onDelta(AgentDelta.Status("[error: context limit exceeded after compaction]"))
+                break
             }
             newMessages.add(assistantResponse)
 
@@ -588,6 +597,47 @@ class AgentEngine(
         }
         commandQueue.clearActiveJob()
         newMessages
+    }
+
+    /**
+     * Call the LLM API with automatic context compaction on context-limit errors.
+     * If a ContextLimitException is thrown, compacts the message history and retries.
+     * Retries up to MAX_COMPACTION_RETRIES times.
+     */
+    private suspend fun callWithCompaction(
+        messages: MutableList<ChatMessage>,
+        tools: List<ToolDefinition>,
+        ephemeral: List<ChatMessage>
+    ): ChatMessage {
+        var compactionAttempts = 0
+        while (true) {
+            val compressed = applySemanticSlidingWindow(messages)
+            val messagesForApi = compressed + ephemeral
+            DebugLog.info("AgentEngine", "Sending ${messagesForApi.size} messages to API, ${tools.size} tools (compaction attempts: $compactionAttempts)")
+            try {
+                return client.chat(messagesForApi, tools)
+            } catch (e: ContextLimitException) {
+                compactionAttempts++
+                if (compactionAttempts > MAX_COMPACTION_RETRIES || contextCompactor == null) {
+                    DebugLog.warn("AgentEngine", "Context limit exceeded, no more compaction retries (attempts=$compactionAttempts, compactor=${contextCompactor != null})")
+                    throw e
+                }
+                DebugLog.info("AgentEngine", "Context limit exceeded, attempting compaction (attempt $compactionAttempts/$MAX_COMPACTION_RETRIES)")
+                onDelta(AgentDelta.Status("[context limit exceeded, compacting conversation...]"))
+                val sizeBefore = messages.size
+                val compacted = contextCompactor.compact(messages)
+                val sizeAfter = compacted.size
+                if (sizeAfter < sizeBefore) {
+                    messages.clear()
+                    messages.addAll(compacted)
+                    onDelta(AgentDelta.CompactionNotice("Context compacted to fit within limits", sizeBefore, sizeAfter))
+                    DebugLog.info("AgentEngine", "Compaction successful: $sizeBefore -> $sizeAfter messages")
+                } else {
+                    DebugLog.warn("AgentEngine", "Compaction did not reduce message count, giving up")
+                    throw e
+                }
+            }
+        }
     }
 
     /**

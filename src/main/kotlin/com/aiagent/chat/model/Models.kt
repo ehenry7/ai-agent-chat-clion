@@ -74,6 +74,8 @@ data class ChatCompletionRequest(
 data class StreamDelta(
     val role: String? = null,
     val content: String? = null,
+    /** Reasoning/thinking content from models that support it (e.g. DeepSeek, GLM with thinking mode). */
+    val reasoning: String? = null,
     @SerialName("tool_calls") val toolCalls: List<StreamToolCall>? = null
 )
 
