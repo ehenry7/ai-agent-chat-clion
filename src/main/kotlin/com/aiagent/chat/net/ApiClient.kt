@@ -20,6 +20,7 @@ class ApiClient(
     val maxAttempts: Int = 3,
     val retryDelayMs: Long = 1500,
     val authHeaderType: AuthHeaderType = AuthHeaderType.BEARER,
+    val maxOutputTokens: Int? = null,
     val onRetry: ((attempt: Int, error: String, delay: Long) -> Unit)? = null
 ) {
     private val json = Json {
@@ -103,7 +104,10 @@ class ApiClient(
     private suspend fun chatOnce(messages: List<ChatMessage>, tools: List<ToolDefinition>?): ChatMessage {
         enforceRateLimit()
         val endpoint = URI.create("${baseUrl.trimEnd('/')}/chat/completions")
-        val reqPayload = ChatCompletionRequest(model = model, messages = messages, tools = tools)
+        val reqPayload = ChatCompletionRequest(
+            model = model, messages = messages, tools = tools,
+            maxCompletionTokens = maxOutputTokens
+        )
         val bodyStr = json.encodeToString(reqPayload)
         DebugLog.info("ApiClient", "=== NON-STREAMING REQUEST ===")
         DebugLog.info("ApiClient", "URL: $endpoint")
@@ -203,7 +207,10 @@ class ApiClient(
     ): ChatMessage {
         enforceRateLimit()
         val endpoint = URI.create("${baseUrl.trimEnd('/')}/chat/completions")
-        val reqPayload = ChatCompletionRequest(model = model, messages = messages, tools = tools, stream = true)
+        val reqPayload = ChatCompletionRequest(
+            model = model, messages = messages, tools = tools, stream = true,
+            maxCompletionTokens = maxOutputTokens
+        )
         val bodyStr = json.encodeToString(reqPayload)
         DebugLog.info("ApiClient", "=== STREAMING REQUEST ===")
         DebugLog.info("ApiClient", "URL: $endpoint")

@@ -19,6 +19,8 @@ class ChatStateService : PersistentStateComponent<ChatStateService.State> {
         var maxSteps: Int = 25
         var apiKey: String = ""
         var approvalMode: String = ApprovalMode.BALANCED.name
+        var maxContextTokens: Int = 32768
+        var maxOutputTokens: Int = 4096
 
         // --- Multi-provider support ---
         /** JSON-serialized list of ProviderConfig. Stored as string for IntelliJ persistence compatibility. */

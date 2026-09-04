@@ -16,6 +16,8 @@ class AiAgentChatConfigurable : Configurable {
     private var baseUrlField: Cell<JBTextField>? = null
     private var modelField: Cell<JBTextField>? = null
     private var maxStepsField: Cell<JBTextField>? = null
+    private var maxContextField: Cell<JBTextField>? = null
+    private var maxOutputField: Cell<JBTextField>? = null
     private var apiKeyField: Cell<JBPasswordField>? = null
 
     override fun getDisplayName() = "AI Agent Chat"
@@ -37,6 +39,16 @@ class AiAgentChatConfigurable : Configurable {
                 maxStepsField = textField()
                 maxStepsField!!.align(Align.FILL)
             }
+            row { label("Max Context Tokens:") }
+            row {
+                maxContextField = textField()
+                maxContextField!!.align(Align.FILL)
+            }
+            row { label("Max Output Tokens:") }
+            row {
+                maxOutputField = textField()
+                maxOutputField!!.align(Align.FILL)
+            }
             row { label("API Key:") }
             row {
                 apiKeyField = passwordField()
@@ -51,6 +63,8 @@ class AiAgentChatConfigurable : Configurable {
         return baseUrlField?.component?.text != settings.state.baseUrl ||
                 modelField?.component?.text != settings.state.model ||
                 maxStepsField?.component?.text != settings.state.maxSteps.toString() ||
+                maxContextField?.component?.text != settings.state.maxContextTokens.toString() ||
+                maxOutputField?.component?.text != settings.state.maxOutputTokens.toString() ||
                 apiKeyField?.component?.password?.let { String(it) } != settings.getApiKey()
     }
 
@@ -58,6 +72,8 @@ class AiAgentChatConfigurable : Configurable {
         settings.state.baseUrl = baseUrlField?.component?.text ?: settings.state.baseUrl
         settings.state.model = modelField?.component?.text ?: settings.state.model
         settings.state.maxSteps = maxStepsField?.component?.text?.toIntOrNull() ?: settings.state.maxSteps
+        settings.state.maxContextTokens = maxContextField?.component?.text?.toIntOrNull() ?: settings.state.maxContextTokens
+        settings.state.maxOutputTokens = maxOutputField?.component?.text?.toIntOrNull() ?: settings.state.maxOutputTokens
         val password = apiKeyField?.component?.password
         if (password != null) {
             settings.setApiKey(String(password))
@@ -68,6 +84,8 @@ class AiAgentChatConfigurable : Configurable {
         baseUrlField?.component?.text = settings.state.baseUrl
         modelField?.component?.text = settings.state.model
         maxStepsField?.component?.text = settings.state.maxSteps.toString()
+        maxContextField?.component?.text = settings.state.maxContextTokens.toString()
+        maxOutputField?.component?.text = settings.state.maxOutputTokens.toString()
         apiKeyField?.component?.text = settings.getApiKey() ?: ""
     }
 }

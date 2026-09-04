@@ -113,8 +113,8 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
     private val providerManager = com.aiagent.chat.model.ProviderManager()
 
     // --- Usage tracking (context/token/memory summary UI) ---
-    private val usageTracker = UsageTracker(maxContextTokens = 32768)
-    private val usageCounterPanel = UsageCounterPanel(maxContextTokens = 32768)
+    private val usageTracker = UsageTracker(maxContextTokens = settings.state.maxContextTokens.coerceAtLeast(1024))
+    private val usageCounterPanel = UsageCounterPanel(maxContextTokens = settings.state.maxContextTokens.coerceAtLeast(1024))
 
     private var todoList: List<TodoItem> = emptyList()
     private val pendingSteerMessages = java.util.concurrent.ConcurrentLinkedQueue<String>()
@@ -702,7 +702,8 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                 baseUrl = selectedBaseUrl,
                 apiKey = selectedApiKey,
                 model = selectedModel,
-                authHeaderType = selectedAuthType
+                authHeaderType = selectedAuthType,
+                maxOutputTokens = if (settings.state.maxOutputTokens > 0) settings.state.maxOutputTokens else null
             )
 
             val contextCompactor = ContextCompactor(client)
