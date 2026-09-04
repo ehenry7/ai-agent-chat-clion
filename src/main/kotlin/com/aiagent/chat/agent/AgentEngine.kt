@@ -38,7 +38,8 @@ class AgentEngine(
     private val stateMachine: SessionStateMachine = SessionStateMachine(),
     private val commandQueue: CommandQueue = CommandQueue(),
     private val contextCompactor: ContextCompactor? = null,
-    val planManager: PlanManager = PlanManager()
+    val planManager: PlanManager = PlanManager(),
+    val providerManager: ProviderManager? = null
 ) {
     companion object {
         const val RECENT_WINDOW_MESSAGES = 8
@@ -567,6 +568,7 @@ class AgentEngine(
                 "Use undo_textdoc to revert the last file edit if you made a mistake.\n" +
                 (if (globalMem.isNotBlank()) "\n<agent_global_memory>\n$globalMem\n</agent_global_memory>" else "") +
                 (if (memory.isNotBlank()) "\n<agent_memory>\n$memory\n</agent_memory>" else "") +
-                planManager.toSystemPromptSection()
+                planManager.toSystemPromptSection() +
+                (providerManager?.toSystemPromptSection() ?: "")
     }
 }

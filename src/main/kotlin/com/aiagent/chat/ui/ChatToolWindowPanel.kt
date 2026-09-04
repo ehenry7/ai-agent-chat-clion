@@ -109,6 +109,9 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
     // --- Plan manager (tool-expansion) ---
     private val planManager = com.aiagent.chat.agent.PlanManager()
 
+    // --- Multi-provider manager (multi-provider architecture) ---
+    private val providerManager = com.aiagent.chat.model.ProviderManager()
+
     // --- Usage tracking (context/token/memory summary UI) ---
     private val usageTracker = UsageTracker(maxContextTokens = 32768)
     private val usageCounterPanel = UsageCounterPanel(maxContextTokens = 32768)
@@ -653,10 +656,53 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
         enhancedInputPanel.updateRunningState(true)
 
         activeEngineJob = scope.launch {
+            // --- Multi-provider: load providers from settings and sync models ---
+            if (settings.isMultiProviderEnabled()) {
+                val savedProviders = settings.getProviders()
+                providerManager.clear()
+                savedProviders.forEach { p ->
+                    providerManager.addProviderOffline(p)
+                    // Try to sync models in background (non-blocking on first launch)
+                    try {
+                        val synced = providerManager.syncModels(p)
+                        providerManager.updateProvider(synced)
+                    } catch (e: Exception) {
+                        DebugLog.warn("ChatToolWindow", "Model sync failed for provider '${p.name}': ${e.message}")
+                    }
+                }
+                DebugLog.info("ChatToolWindow", "Multi-provider mode: ${providerManager.providers.size} providers, ${providerManager.allModels.size} models")
+            }
+
+            // --- Dynamic model routing: analyze task and select optimal model ---
+            var selectedModel = settings.state.model
+            var selectedBaseUrl = settings.state.baseUrl
+            var selectedApiKey = settings.getApiKey() ?: ""
+            var selectedAuthType = com.aiagent.chat.model.AuthHeaderType.BEARER
+
+            if (settings.isDynamicRoutingEnabled() && providerManager.allModels.isNotEmpty()) {
+                val complexity = com.aiagent.chat.model.ModelRouter.analyzeComplexity(promptText)
+                val routedModel = com.aiagent.chat.model.ModelRouter.selectModel(complexity, providerManager.allModels)
+                if (routedModel != null) {
+                    selectedModel = routedModel.id
+                    val provider = providerManager.findProviderForModel(routedModel.id)
+                    if (provider != null) {
+                        selectedBaseUrl = provider.baseUrl
+                        selectedApiKey = provider.apiKey
+                        selectedAuthType = provider.authHeaderType
+                    }
+                    val routingExplain = com.aiagent.chat.model.ModelRouter.explainRouting(complexity, routedModel)
+                    DebugLog.info("ChatToolWindow", "Dynamic routing: $routingExplain")
+                    SwingUtilities.invokeLater {
+                        statusLabel.text = "Routed to: ${routedModel.id} (${routedModel.sizeTag.displayName})"
+                    }
+                }
+            }
+
             val client = ApiClient(
-                baseUrl = settings.state.baseUrl,
-                apiKey = settings.getApiKey() ?: "",
-                model = settings.state.model
+                baseUrl = selectedBaseUrl,
+                apiKey = selectedApiKey,
+                model = selectedModel,
+                authHeaderType = selectedAuthType
             )
 
             val contextCompactor = ContextCompactor(client)
@@ -687,6 +733,7 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                 },
                 contextCompactor = contextCompactor,
                 planManager = planManager,
+                providerManager = providerManager,
                 onDelta = { delta ->
                     when (delta) {
                         is AgentDelta.Status -> {
@@ -718,9 +765,7 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                             activeStreamingPanel?.appendText(delta.text)
                         }
                         is AgentDelta.StreamingReasoning -> {
-                            // Reasoning/thinking content — display in a distinct style
-                            // For now, append to streaming panel with a prefix marker
-                            activeStreamingPanel?.appendText("[thinking] ${delta.text}")
+                            activeStreamingPanel?.appendThinking(delta.text)
                         }
                         is AgentDelta.StreamingEnd -> {
                             if (delta.fullText.isNotBlank()) {
