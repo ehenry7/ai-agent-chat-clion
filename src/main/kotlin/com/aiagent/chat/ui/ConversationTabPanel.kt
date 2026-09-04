@@ -57,15 +57,29 @@ class ConversationTabPanel : JBPanel<ConversationTabPanel>(BorderLayout()) {
             preferredSize = Dimension(0, 32)
         }
 
-        add(tabScroll, BorderLayout.NORTH)
+        val tabBarWrapper = JPanel(BorderLayout()).apply {
+            isOpaque = false
+            add(tabScroll, BorderLayout.CENTER)
+            val rightButtonsPanel = JPanel(FlowLayout(FlowLayout.RIGHT, 2, 0)).apply {
+                isOpaque = false
+                add(createIconButton(AllIcons.Actions.New, "New Session") {
+                    onNewTab?.invoke()
+                })
+                add(createIconButton(AllIcons.General.Information, "Session Info") {
+                    showSessionInfo()
+                })
+            }
+            add(rightButtonsPanel, BorderLayout.EAST)
+        }
+        add(tabBarWrapper, BorderLayout.NORTH)
         add(contentPanel, BorderLayout.CENTER)
     }
 
     /**
      * Creates a new conversation tab and returns its ID.
      */
-    fun newConversation(title: String = "New Chat"): String {
-        val id = "chat_${nextId++}"
+    fun newConversation(title: String = "Session"): String {
+        val id = "session_${nextId++}"
         val messageContainer = JPanel().apply {
             layout = java.awt.GridBagLayout()
             background = JBColor.PanelBackground
@@ -175,6 +189,33 @@ class ConversationTabPanel : JBPanel<ConversationTabPanel>(BorderLayout()) {
     }
 
     fun getAllConversations(): List<Conversation> = conversations.values.toList()
+
+    private fun createIconButton(icon: javax.swing.Icon, tooltip: String, onClick: () -> Unit): JButton {
+        return JButton(icon).apply {
+            toolTipText = tooltip
+            isContentAreaFilled = false
+            isBorderPainted = false
+            isFocusPainted = false
+            margin = JBUI.insets(2)
+            preferredSize = Dimension(24, 24)
+            cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
+            addActionListener { onClick() }
+        }
+    }
+
+    private fun showSessionInfo() {
+        val conv = getActiveConversation()
+        val popup = JPopupMenu()
+        if (conv == null) {
+            popup.add(JLabel("No active session"))
+        } else {
+            popup.add(JLabel("Title: ${conv.title}"))
+            popup.add(JLabel("ID: ${conv.id}"))
+            popup.add(JLabel("Messages: ${conv.history.size}"))
+            popup.add(JLabel("Log entries: ${conv.uiLog.size}"))
+        }
+        popup.show(this, 0, 0)
+    }
 
     /**
      * Represents a single conversation with its own message container,

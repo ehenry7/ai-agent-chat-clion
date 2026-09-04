@@ -5,6 +5,7 @@ import com.aiagent.chat.model.*
 import com.aiagent.chat.net.ApiClient
 import com.aiagent.chat.net.ContextLimitException
 import com.aiagent.chat.net.StreamChunk
+import com.aiagent.chat.tools.ToolRegistry
 import kotlinx.coroutines.*
 import kotlinx.serialization.json.*
 
@@ -45,11 +46,7 @@ class AgentEngine(
         const val MAX_COMPACTION_RETRIES = 2
     }
 
-    private val mutatingTools = setOf(
-        "write_file", "edit_file", "apply_patch", "apply_diff",
-        "search_replace", "delete_file", "delete_directory",
-        "rename_file", "create_directory", "run_command", "run_python", "git_commit"
-    )
+    private val mutatingTools: Set<String> get() = ToolRegistry.mutatingToolNames()
 
     /** Expose state machine for external queries (e.g. UI status display). */
     val state: AgentSessionState get() = stateMachine.state
@@ -642,22 +639,10 @@ class AgentEngine(
 
     /**
      * Get the tool category for approval routing.
-     * Mirrors the categorization in PlatformToolHandler but kept here for the engine's own logic.
+     * Delegates to ToolRegistry (single source of truth).
      */
     private fun getToolCategoryForApproval(toolName: String): ToolCategory {
-        val readOnlyTools = setOf(
-            "read_file", "read_file_lines", "list_directory", "find_files",
-            "search_in_files", "get_active_editor", "fetch_url", "web_search",
-            "git_status", "git_diff", "git_log", "format_document",
-            "update_todo_list", "request_phase_change"
-        )
-        val dangerousTools = setOf("run_command", "run_python")
-
-        return when (toolName) {
-            in readOnlyTools -> ToolCategory.READ_ONLY
-            in dangerousTools -> ToolCategory.DANGEROUS
-            else -> ToolCategory.MUTATING
-        }
+        return ToolRegistry.getCategory(toolName)
     }
 
     private fun buildSystemPrompt(toolNames: List<String>, memory: String, globalMem: String, phase: String): String {

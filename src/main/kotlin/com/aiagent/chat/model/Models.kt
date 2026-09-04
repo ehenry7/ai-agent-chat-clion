@@ -60,6 +60,20 @@ data class ToolDefinition(
     val function: ToolFunctionDef
 )
 
+/**
+ * Pairs a tool definition with its safety category.
+ * This is the single source of truth for tool metadata — the category travels
+ * with the definition so there's no separate lookup map that can get out of sync.
+ *
+ * Inspired by refact-main's tool registry with per-tool dependency/category declarations.
+ */
+data class ToolDeclaration(
+    val definition: ToolDefinition,
+    val category: ToolCategory
+) {
+    val name: String get() = definition.function.name
+}
+
 @Serializable
 data class ChatCompletionRequest(
     val model: String,

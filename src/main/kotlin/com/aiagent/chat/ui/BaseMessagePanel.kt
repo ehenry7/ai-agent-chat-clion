@@ -34,24 +34,20 @@ abstract class BaseMessagePanel(
     private var bodyComponent: JComponent? = null
 
     init {
-        com.aiagent.chat.debug.DebugLog.info("BaseMessagePanel", "init START: displayName='$displayName', role='$role', bubbleBackground=${getBubbleBackground()}, isEDT=${SwingUtilities.isEventDispatchThread()}")
         border = JBUI.Borders.compound(
             JBUI.Borders.customLine(JBColor.border(), 1),
             JBUI.Borders.empty(8, 12)
         )
         background = getBubbleBackground()
-        com.aiagent.chat.debug.DebugLog.info("BaseMessagePanel", "init: border=$border, background=$background")
 
         buildHeader()
 
         add(headerPanel, BorderLayout.NORTH)
         add(bodyContainer, BorderLayout.CENTER)
-        com.aiagent.chat.debug.DebugLog.info("BaseMessagePanel", "init: headerPanel (NORTH) + bodyContainer (CENTER) added, headerPanel size=${headerPanel.width}x${headerPanel.height}")
 
         // buildBody() is NOT called here — subclasses must call it from their
         // own init{} block so that subclass constructor properties (messageText,
         // project, etc.) are initialized before buildBody() runs.
-        com.aiagent.chat.debug.DebugLog.info("BaseMessagePanel", "init END: preferredSize=${preferredSize}, componentCount=${components.size}")
     }
 
     private fun buildHeader() {
@@ -115,7 +111,6 @@ abstract class BaseMessagePanel(
             bodyContainer.isOpaque = false
             revalidate()
             repaint()
-            com.aiagent.chat.debug.DebugLog.info("BaseMessagePanel", "setBodyContent: component class=${component.javaClass.name}, preferredSize=${component.preferredSize}, bodyContainer size=${bodyContainer.width}x${bodyContainer.height}")
         } catch (e: Exception) {
             com.aiagent.chat.debug.DebugLog.error("BaseMessagePanel", "setBodyContent failed: ${e.message}", e)
         }
