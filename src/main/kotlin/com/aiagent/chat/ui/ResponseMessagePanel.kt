@@ -5,11 +5,14 @@ import com.intellij.openapi.project.Project
 import com.intellij.ui.JBColor
 import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
+import java.awt.Dimension
+import javax.swing.BoxLayout
 import javax.swing.Icon
-import javax.swing.JEditorPane
 import javax.swing.JPanel
 import javax.swing.JTextPane
-import javax.swing.text.html.HTMLEditorKit
+import javax.swing.ScrollPaneConstants
+import javax.swing.JScrollPane
+import javax.swing.SwingUtilities
 
 /**
  * Panel for rendering assistant responses with rich markdown-to-HTML rendering.
@@ -27,57 +30,80 @@ class ResponseMessagePanel(
 
     override fun getBubbleBackground(): JBColor = JBColor(0xFAFAFA, 0x232527)
 
-    override fun buildBody() {
-        val wrapper = JPanel()
-        wrapper.isOpaque = false
-        wrapper.layout = javax.swing.BoxLayout(wrapper, javax.swing.BoxLayout.Y_AXIS)
+    init {
+        buildBody()
+    }
 
-        if (project != null) {
-            // Use segment-based rendering with CodeBlockPanel for code blocks
-            val segments = CodeBlockPanel.parseSegments(messageText)
-            for (segment in segments) {
-                when (segment) {
-                    is CodeBlockPanel.ResponseSegment.Text -> {
-                        val textPane = createTextPane(renderMarkdown(segment.content))
-                        wrapper.add(textPane)
-                    }
-                    is CodeBlockPanel.ResponseSegment.Code -> {
-                        val codePanel = CodeBlockPanel(project, segment.content, segment.language)
-                        wrapper.add(codePanel)
+    override fun buildBody() {
+        com.aiagent.chat.debug.DebugLog.info("ResponseMessagePanel", "buildBody START: messageText.length=${messageText?.length}, project=${project != null}, isEDT=${SwingUtilities.isEventDispatchThread()}")
+        try {
+            val wrapper = JPanel()
+            wrapper.isOpaque = false
+            wrapper.layout = BoxLayout(wrapper, BoxLayout.Y_AXIS)
+            com.aiagent.chat.debug.DebugLog.info("ResponseMessagePanel", "buildBody: wrapper created (BoxLayout Y_AXIS), opaque=false")
+
+            if (project != null) {
+                // Use segment-based rendering with CodeBlockPanel for code blocks
+                val segments = CodeBlockPanel.parseSegments(messageText)
+                com.aiagent.chat.debug.DebugLog.info("ResponseMessagePanel", "buildBody: parsed ${segments.size} segments (project mode)")
+                for ((index, segment) in segments.withIndex()) {
+                    when (segment) {
+                        is CodeBlockPanel.ResponseSegment.Text -> {
+                            val html = renderMarkdown(segment.content)
+                            com.aiagent.chat.debug.DebugLog.info("ResponseMessagePanel", "buildBody: segment[$index] TEXT len=${segment.content.length}, htmlLen=${html.length}")
+                            val textPane = createTextPane(html)
+                            // Let the DynamicHeightTextPane compute its own height.
+                            // Don't set maximumSize here — the stale preferredSize.height
+                            // captured before layout causes clipping. The text pane's
+                            // own getMaximumSize() already returns the correct height.
+                            textPane.alignmentX = JPanel.LEFT_ALIGNMENT
+                            com.aiagent.chat.debug.DebugLog.info("ResponseMessagePanel", "buildBody: segment[$index] textPane created class=${textPane.javaClass.simpleName}, preferredSize=${textPane.preferredSize}, font=${textPane.font}")
+                            wrapper.add(textPane)
+                            com.aiagent.chat.debug.DebugLog.info("ResponseMessagePanel", "buildBody: segment[$index] textPane added to wrapper, wrapper.componentCount=${wrapper.componentCount}")
+                        }
+                        is CodeBlockPanel.ResponseSegment.Code -> {
+                            com.aiagent.chat.debug.DebugLog.info("ResponseMessagePanel", "buildBody: segment[$index] CODE lang=${segment.language}, len=${segment.content.length}")
+                            val codePanel = CodeBlockPanel(project, segment.content, segment.language)
+                            codePanel.alignmentX = JPanel.LEFT_ALIGNMENT
+                            com.aiagent.chat.debug.DebugLog.info("ResponseMessagePanel", "buildBody: segment[$index] codePanel created preferredSize=${codePanel.preferredSize}")
+                            wrapper.add(codePanel)
+                        }
                     }
                 }
+            } else {
+                // Fallback: pure HTML rendering (no editor)
+                com.aiagent.chat.debug.DebugLog.info("ResponseMessagePanel", "buildBody: fallback single HTML pane mode")
+                val editorPane = HtmlPaneFactory.createHtmlPane(
+                    htmlBody = renderMarkdown(messageText),
+                    bgColor = background,
+                    fgColor = JBColor(0x333333, 0xDDDDDD)
+                )
+                editorPane.alignmentX = JPanel.LEFT_ALIGNMENT
+                wrapper.add(editorPane)
             }
-        } else {
-            // Fallback: pure HTML rendering (no editor)
-            val editorPane = JEditorPane().apply {
-                contentType = "text/html"
-                editorKit = HTMLEditorKit()
-                isEditable = false
-                background = background
-                putClientProperty(JEditorPane.HONOR_DISPLAY_PROPERTIES, true)
-                text = "<html><body style='font-family: sans-serif; font-size: 12px; word-wrap: break-word;'>" +
-                        renderMarkdown(messageText) + "</body></html>"
-                border = JBUI.Borders.empty(2, 0)
-            }
-            wrapper.add(editorPane)
-        }
 
-        setBodyContent(wrapper)
+            com.aiagent.chat.debug.DebugLog.info("ResponseMessagePanel", "buildBody: wrapper.componentCount=${wrapper.componentCount}, wrapper.preferredSize=${wrapper.preferredSize}")
+            setBodyContent(wrapper)
+            com.aiagent.chat.debug.DebugLog.info("ResponseMessagePanel", "buildBody END: setBodyContent(wrapper) called")
+        } catch (e: Exception) {
+            com.aiagent.chat.debug.DebugLog.error("ResponseMessagePanel", "buildBody failed: ${e.message}", e)
+            val fallbackWrapper = JPanel()
+            fallbackWrapper.isOpaque = false
+            val errorLabel = javax.swing.JLabel("Error rendering message: ${e.message}")
+            fallbackWrapper.add(errorLabel)
+            setBodyContent(fallbackWrapper)
+        }
     }
 
     private fun createTextPane(htmlContent: String): JTextPane {
-        return JTextPane().apply {
-            contentType = "text/html"
-            editorKit = HTMLEditorKit()
-            isEditable = false
-            background = background
-            putClientProperty(JTextPane.HONOR_DISPLAY_PROPERTIES, true)
-            text = "<html><body style='font-family: sans-serif; font-size: 12px; word-wrap: break-word;'>" +
-                    htmlContent + "</body></html>"
-            border = JBUI.Borders.empty(2, 0)
-            alignmentX = JPanel.LEFT_ALIGNMENT
-            maximumSize = java.awt.Dimension(Int.MAX_VALUE, Int.MAX_VALUE)
-        }
+        com.aiagent.chat.debug.DebugLog.info("ResponseMessagePanel", "createTextPane: htmlContent.length=${htmlContent.length}, bubble background=$background")
+        val pane = HtmlPaneFactory.createHtmlPane(
+            htmlBody = htmlContent,
+            bgColor = background,
+            fgColor = JBColor(0x333333, 0xDDDDDD)
+        )
+        com.aiagent.chat.debug.DebugLog.info("ResponseMessagePanel", "createTextPane: pane returned, preferredSize=${pane.preferredSize}, isEDT=${SwingUtilities.isEventDispatchThread()}")
+        return pane
     }
 
     override fun getPlainText(): String = messageText
@@ -90,7 +116,8 @@ class ResponseMessagePanel(
      * - Bullet lists (- item)
      * - Tables (| col | col |)
      */
-    private fun renderMarkdown(text: String): String {
+    private fun renderMarkdown(text: String?): String {
+        if (text.isNullOrBlank()) return ""
         val escaped = text.replace("<", "&lt;").replace(">", "&gt;")
         val sb = StringBuilder()
 
@@ -111,7 +138,7 @@ class ResponseMessagePanel(
                 sb.append("<tr>")
                 val cells = tLine.removePrefix("|").removeSuffix("|").split("|")
                 for (cell in cells) {
-                    sb.append("<td style='padding: 4px 8px; border: 1px solid #777777;'>${cell.trim()}</td>")
+                    sb.append("<td style='padding: 4px 8px; border: 1px solid #777777;'>${HtmlPaneFactory.insertWbr(cell.trim())}</td>")
                 }
                 sb.append("</tr>")
             } else {
@@ -128,7 +155,7 @@ class ResponseMessagePanel(
                     tLine.startsWith("  - ") -> sb.append("<div style='margin: 2px 0 16px;'>&#8226; ${tLine.trim().substring(2)}</div>")
                     tLine.isEmpty() -> { /* skip empty lines to reduce spacing */ }
                     else -> {
-                        var content = line
+                        var content = HtmlPaneFactory.insertWbr(line)
                         // Inline formatting
                         content = content.replace(Regex("\\*\\*([^*]+)\\*\\*"), "<b>$1</b>")
                         content = content.replace(Regex("\\*([^*]+)\\*"), "<i>$1</i>")

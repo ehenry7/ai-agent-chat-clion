@@ -12,7 +12,9 @@ import java.awt.event.MouseEvent
 import javax.swing.Icon
 import javax.swing.JComponent
 import javax.swing.JPanel
+import javax.swing.JScrollPane
 import javax.swing.JTextArea
+import javax.swing.ScrollPaneConstants
 
 /**
  * Collapsible card for displaying tool call results.

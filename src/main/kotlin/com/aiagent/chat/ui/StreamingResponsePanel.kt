@@ -5,15 +5,10 @@ import com.intellij.openapi.project.Project
 import com.intellij.ui.JBColor
 import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
-import java.awt.Cursor
-import java.awt.event.MouseAdapter
-import java.awt.event.MouseEvent
+import java.awt.FlowLayout
 import javax.swing.Icon
-import javax.swing.JButton
-import javax.swing.JComponent
 import javax.swing.JLabel
 import javax.swing.JPanel
-import javax.swing.JScrollPane
 import javax.swing.JTextPane
 import javax.swing.SwingUtilities
 import javax.swing.text.html.HTMLEditorKit
@@ -32,25 +27,14 @@ class StreamingResponsePanel(
     private val textBuilder = StringBuilder()
     private var isStreaming = true
 
-    private val textPane = JTextPane().apply {
-        contentType = "text/html"
-        editorKit = HTMLEditorKit()
-        isEditable = false
-        background = background
-        putClientProperty(JTextPane.HONOR_DISPLAY_PROPERTIES, true)
-        border = JBUI.Borders.empty(2, 0)
-    }
-
-    /** A blinking cursor indicator shown while streaming. */
-    private val cursorLabel = JLabel("&#9646;").apply {
-        font = font.deriveFont(java.awt.Font.BOLD, 13f)
-        foreground = JBColor(0x0066CC, 0x4A9EFF)
-    }
-
+    private lateinit var textPane: DynamicHeightTextPane
+    private lateinit var cursorLabel: JLabel
     private var cursorBlinkTimer: javax.swing.Timer? = null
 
     init {
-        startCursorBlink()
+        // buildBody() must be called from the subclass init{} block, not from
+        // BaseMessagePanel.init{}, so that all subclass properties are initialized.
+        buildBody()
     }
 
     override fun getRoleIcon(): Icon = AllIcons.General.Balloon
@@ -58,18 +42,37 @@ class StreamingResponsePanel(
     override fun getBubbleBackground(): JBColor = JBColor(0xFAFAFA, 0x232527)
 
     override fun buildBody() {
+        textPane = DynamicHeightTextPane().apply {
+            contentType = "text/html"
+            editorKit = HTMLEditorKit()
+            isEditable = false
+            background = this@StreamingResponsePanel.background
+            putClientProperty(JTextPane.HONOR_DISPLAY_PROPERTIES, true)
+            border = JBUI.Borders.empty(2, 0)
+        }
+
+        cursorLabel = JLabel("\u25AE").apply {
+            font = font.deriveFont(java.awt.Font.BOLD, 13f)
+            foreground = JBColor(0x0066CC, 0x4A9EFF)
+        }
+
+        startCursorBlink()
+
         val wrapper = JPanel(BorderLayout())
         wrapper.isOpaque = false
 
-        val scrollWrapper = JScrollPane(textPane).apply {
-            isOpaque = false
-            border = JBUI.Borders.empty()
-            horizontalScrollBarPolicy = JScrollPane.HORIZONTAL_SCROLLBAR_NEVER
-            verticalScrollBarPolicy = JScrollPane.VERTICAL_SCROLLBAR_NEVER
-        }
+        // Text pane fills the full width (no JScrollPane wrapper -- the parent
+        // conversation already has a scroll pane, and wrapping in another one
+        // clips content and breaks width tracking).
+        wrapper.add(textPane, BorderLayout.CENTER)
 
-        wrapper.add(scrollWrapper, BorderLayout.CENTER)
-        wrapper.add(cursorLabel, BorderLayout.EAST)
+        // Cursor label below the text (not to the right, which steals horizontal
+        // space from the streaming content).
+        val cursorPanel = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).apply {
+            isOpaque = false
+            add(cursorLabel)
+        }
+        wrapper.add(cursorPanel, BorderLayout.SOUTH)
 
         setBodyContent(wrapper)
     }
@@ -129,12 +132,16 @@ class StreamingResponsePanel(
         val html = renderStreamingMarkdown(textBuilder.toString())
         textPane.text = "<html><body style='font-family: sans-serif; font-size: 12px; word-wrap: break-word;'>" +
                 html + "</body></html>"
+        // Trigger revalidate so DynamicHeightTextPane recalculates its height
+        // after the content changes. Without this, the panel doesn't grow
+        // as new tokens arrive during streaming.
+        textPane.revalidate()
     }
 
     private fun scrollParentToBottom() {
         var parent = parent
         while (parent != null) {
-            if (parent is JScrollPane) {
+            if (parent is javax.swing.JScrollPane) {
                 val bar = parent.verticalScrollBar
                 bar.value = bar.maximum
                 break
@@ -174,7 +181,7 @@ class StreamingResponsePanel(
                 tLine.startsWith("## ") -> sb.append("<h2 style='margin: 8px 0 4px 0; font-size: 14px;'>${tLine.substring(3)}</h2>")
                 tLine.startsWith("# ") -> sb.append("<h1 style='margin: 8px 0 4px 0; font-size: 16px;'>${tLine.substring(2)}</h1>")
                 tLine.startsWith("- ") -> sb.append("<div style='margin: 2px 0;'>&#8226; ${tLine.substring(2)}</div>")
-                tLine.isEmpty() -> { /* skip */ }
+                tLine.isEmpty() -> sb.append("<br>")
                 else -> {
                     var content = line
                     content = content.replace(Regex("\\*\\*([^*]+)\\*\\*"), "<b>$1</b>")

@@ -9,8 +9,7 @@ import java.awt.FlowLayout
 import javax.swing.Icon
 import javax.swing.JComponent
 import javax.swing.JPanel
-import javax.swing.JTextPane
-import javax.swing.text.html.HTMLEditorKit
+import javax.swing.SwingUtilities
 
 /**
  * Panel for rendering user messages with an avatar icon and optional referenced files.
@@ -24,29 +23,34 @@ class UserMessagePanel(
 
     override fun getBubbleBackground(): JBColor = JBColor(0xEEEEEE, 0x2D2F31)
 
+    init {
+        buildBody()
+    }
+
     override fun buildBody() {
+        com.aiagent.chat.debug.DebugLog.info("UserMessagePanel", "buildBody START: messageText.length=${messageText?.length}, referencedFiles=${referencedFiles.size}, isEDT=${SwingUtilities.isEventDispatchThread()}")
         val wrapper = JPanel(BorderLayout())
         wrapper.isOpaque = false
 
         // Message text
-        val textPane = JTextPane().apply {
-            contentType = "text/html"
-            editorKit = HTMLEditorKit()
-            isEditable = false
-            background = background
-            putClientProperty(JTextPane.HONOR_DISPLAY_PROPERTIES, true)
-            text = "<html><body style='font-family: sans-serif; font-size: 12px; word-wrap: break-word;'>" +
-                    escapeHtml(messageText) + "</body></html>"
-            border = JBUI.Borders.empty(2, 0)
-        }
+        val htmlBody = escapeHtml(messageText)
+        com.aiagent.chat.debug.DebugLog.info("UserMessagePanel", "buildBody: escapeHtml produced htmlBody.length=${htmlBody.length}")
+        val textPane = HtmlPaneFactory.createHtmlPane(
+            htmlBody = htmlBody,
+            bgColor = background,
+            fgColor = JBColor(0x333333, 0xDDDDDD)
+        )
+        com.aiagent.chat.debug.DebugLog.info("UserMessagePanel", "buildBody: textPane created preferredSize=${textPane.preferredSize}, font=${textPane.font}")
         wrapper.add(textPane, BorderLayout.CENTER)
+        com.aiagent.chat.debug.DebugLog.info("UserMessagePanel", "buildBody: textPane added to wrapper CENTER")
 
         // Referenced files accordion (if any)
-        if (referencedFiles.isNotEmpty()) {
+        if (!referencedFiles.isNullOrEmpty()) {
             val filesPanel = buildReferencedFilesPanel()
             wrapper.add(filesPanel, BorderLayout.SOUTH)
         }
 
+        com.aiagent.chat.debug.DebugLog.info("UserMessagePanel", "buildBody: calling setBodyContent(wrapper)")
         setBodyContent(wrapper)
     }
 
@@ -95,10 +99,12 @@ class UserMessagePanel(
 
     override fun getPlainText(): String = messageText
 
-    private fun escapeHtml(text: String): String {
-        return text.replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-            .replace("\n", "<br>")
+    private fun escapeHtml(text: String?): String {
+        if (text.isNullOrBlank()) return ""
+        return HtmlPaneFactory.insertWbr(
+            text.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+        ).replace("\n", "<br>")
     }
 }

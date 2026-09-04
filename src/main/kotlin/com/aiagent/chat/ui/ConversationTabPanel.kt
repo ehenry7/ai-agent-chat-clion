@@ -7,6 +7,7 @@ import com.intellij.openapi.ui.Messages
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBPanel
+import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
 import java.awt.CardLayout
@@ -79,7 +80,7 @@ class ConversationTabPanel : JBPanel<ConversationTabPanel>(BorderLayout()) {
         }
         messageContainer.add(fillerComponent, fillerGbc)
 
-        val scrollPane = JScrollPane(messageContainer).apply {
+        val scrollPane = JBScrollPane(messageContainer).apply {
             border = JBUI.Borders.empty()
             horizontalScrollBarPolicy = JScrollPane.HORIZONTAL_SCROLLBAR_NEVER
         }
@@ -131,6 +132,8 @@ class ConversationTabPanel : JBPanel<ConversationTabPanel>(BorderLayout()) {
     fun getActiveConversation(): Conversation? {
         return activeTabId?.let { conversations[it] }
     }
+
+    fun getConversation(tabId: String): Conversation? = conversations[tabId]
 
     fun closeConversation(tabId: String) {
         if (conversations.size <= 1) return // Keep at least one tab
@@ -207,8 +210,7 @@ class ConversationTabPanel : JBPanel<ConversationTabPanel>(BorderLayout()) {
             isContentAreaFilled = false
             isBorderPainted = false
             isFocusPainted = false
-            margin = JBUI.insets(0)
-            preferredSize = java.awt.Dimension(16, 16)
+            preferredSize = Dimension(16, 16)
             cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
             toolTipText = "Close tab"
             addActionListener {

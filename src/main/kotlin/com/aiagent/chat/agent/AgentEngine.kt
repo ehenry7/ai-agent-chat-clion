@@ -1,5 +1,6 @@
 package com.aiagent.chat.agent
 
+import com.aiagent.chat.debug.DebugLog
 import com.aiagent.chat.model.*
 import com.aiagent.chat.net.ApiClient
 import com.aiagent.chat.net.StreamChunk
@@ -82,9 +83,12 @@ class AgentEngine(
         for (step in 0 until maxSteps) {
             ensureActive()
 
+            DebugLog.info("AgentEngine", "Step ${step + 1}/$maxSteps, phase: $currentPhase, message count: ${messages.size}")
+
             // Inject steering messages
             val steerText = steerProvider?.invoke()
             if (steerText != null && steerText.isNotBlank()) {
+                DebugLog.info("AgentEngine", "Injecting steer message: ${steerText.take(100)}")
                 val steerMsg = ChatMessage(MessageRole.USER, steerText)
                 messages.add(steerMsg)
                 newMessages.add(steerMsg)
@@ -97,10 +101,13 @@ class AgentEngine(
             } else {
                 availableTools.filterNot { mutatingTools.contains(it.function.name) }
             }
+            DebugLog.info("AgentEngine", "Active tools: ${activeTools.size} (phase=$currentPhase, mutatingTools filtered=${currentPhase != "execution"})")
 
+            val systemPrompt = buildSystemPrompt(activeTools.map { it.function.name }, memory, globalMemory, currentPhase)
+            DebugLog.info("AgentEngine", "System prompt: ${systemPrompt.take(200)}...")
             messages[0] = ChatMessage(
                 MessageRole.SYSTEM,
-                content = buildSystemPrompt(activeTools.map { it.function.name }, memory, globalMemory, currentPhase)
+                content = systemPrompt
             )
 
             val ephemeral = mutableListOf<ChatMessage>()
@@ -111,25 +118,19 @@ class AgentEngine(
             val compressed = applySemanticSlidingWindow(messages)
             val messagesForApi = compressed + ephemeral
 
-            // Stream the response
-            onDelta(AgentDelta.StreamingStart())
+            DebugLog.info("AgentEngine", "Sending ${messagesForApi.size} messages to API, ${activeTools.size} tools")
+            messagesForApi.forEachIndexed { idx, msg ->
+                DebugLog.info("AgentEngine", "  Message[$idx] ${msg.role}: ${msg.content?.take(80) ?: "[no content]"}${if (msg.toolCalls != null) " [has tool_calls]" else ""}")
+            }
 
-            val assistantResponse = client.chatStream(
+            // Use non-streaming mode (more reliable)
+            DebugLog.info("AgentEngine", "Sending non-streaming request to API")
+            val assistantResponse = client.chat(
                 messages = messagesForApi,
-                tools = activeTools,
-                onChunk = { chunk ->
-                    when (chunk) {
-                        is StreamChunk.Content -> {
-                            onDelta(AgentDelta.StreamingContent(chunk.text))
-                        }
-                        is StreamChunk.ToolCallDelta -> {
-                            // Could emit tool call progress here if desired
-                        }
-                    }
-                }
+                tools = activeTools
             )
-
-            onDelta(AgentDelta.StreamingEnd(assistantResponse.content ?: ""))
+            DebugLog.info("AgentEngine", "Non-streaming response received: ${assistantResponse.content?.take(100) ?: "[no content]"}")
+            onDelta(AgentDelta.Assistant(assistantResponse.content ?: ""))
             newMessages.add(assistantResponse)
 
             // Extract plan from content
@@ -162,6 +163,7 @@ class AgentEngine(
                     if (funcName == "request_phase_change") {
                         val target = parsedArgs["target_phase"]?.jsonPrimitive?.content ?: "discovery"
                         currentPhase = if (target == "execution") "execution" else "discovery"
+                        DebugLog.info("AgentEngine", "Phase change requested: $target -> $currentPhase")
                         val result = "Phase changed to '$currentPhase'."
                         onPhaseChange?.invoke(currentPhase)
 
@@ -172,12 +174,15 @@ class AgentEngine(
                         continue
                     }
 
+                    DebugLog.info("AgentEngine", "Calling tool: $funcName with args: ${parsedArgs.toString().take(100)}")
                     val toolResult = try {
                         toolExecutor(funcName, parsedArgs)
                     } catch (e: Exception) {
+                        DebugLog.error("AgentEngine", "Tool $funcName threw: ${e.message}", e)
                         "Error executing tool $funcName: ${e.message}"
                     }
 
+                    DebugLog.info("AgentEngine", "Tool $funcName returned: ${toolResult.take(100)}")
                     onDelta(AgentDelta.ToolOutput(funcName, toolResult))
                     val toolMsg = ChatMessage(MessageRole.TOOL, content = toolResult, toolCallId = call.id)
                     messages.add(toolMsg)
@@ -293,6 +298,7 @@ class AgentEngine(
                     if (funcName == "request_phase_change") {
                         val target = parsedArgs["target_phase"]?.jsonPrimitive?.content ?: "discovery"
                         currentPhase = if (target == "execution") "execution" else "discovery"
+                        DebugLog.info("AgentEngine", "Phase change requested: $target -> $currentPhase")
                         val result = "Phase changed to '$currentPhase'."
                         onPhaseChange?.invoke(currentPhase)
 
@@ -303,12 +309,15 @@ class AgentEngine(
                         continue
                     }
 
+                    DebugLog.info("AgentEngine", "Calling tool: $funcName with args: ${parsedArgs.toString().take(100)}")
                     val toolResult = try {
                         toolExecutor(funcName, parsedArgs)
                     } catch (e: Exception) {
+                        DebugLog.error("AgentEngine", "Tool $funcName threw: ${e.message}", e)
                         "Error executing tool $funcName: ${e.message}"
                     }
 
+                    DebugLog.info("AgentEngine", "Tool $funcName returned: ${toolResult.take(100)}")
                     onDelta(AgentDelta.ToolOutput(funcName, toolResult))
                     val toolMsg = ChatMessage(MessageRole.TOOL, content = toolResult, toolCallId = call.id)
                     messages.add(toolMsg)

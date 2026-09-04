@@ -133,7 +133,7 @@ object ThemeUtils {
      * Returns true if the current theme is dark.
      */
     fun isDarkTheme(): Boolean {
-        return JBColor.isBright()
+        return !JBColor.isBright()
     }
 
     /**

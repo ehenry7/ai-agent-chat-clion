@@ -1,13 +1,16 @@
 package com.aiagent.chat.ui
 
+import com.aiagent.chat.debug.DebugLog
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBPanel
+import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
 import com.intellij.util.ui.JBUI
 import java.awt.*
@@ -66,7 +69,7 @@ class EnhancedInputPanel(
         isVisible = false
     }
 
-    private val modelSelector = JComboBox<String>().apply {
+    private val modelSelector = ComboBox<String>().apply {
         toolTipText = "Select model"
         preferredSize = Dimension(150, 28)
     }
@@ -80,6 +83,14 @@ class EnhancedInputPanel(
 
         setupLayout()
         setupListeners()
+
+        modelSelector.addActionListener {
+            val selected = modelSelector.selectedItem as? String ?: return@addActionListener
+            if (selected != currentModel()) {
+                DebugLog.info("EnhancedInputPanel", "Model selector changed to '$selected'")
+                onModelChange(selected)
+            }
+        }
     }
 
     private fun setupLayout() {
@@ -91,7 +102,7 @@ class EnhancedInputPanel(
         }
 
         // Text area in a scroll pane
-        val scrollPane = JScrollPane(inputArea).apply {
+        val scrollPane = JBScrollPane(inputArea).apply {
             border = JBUI.Borders.empty()
             horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
             preferredSize = Dimension(0, 60)
@@ -170,14 +181,21 @@ class EnhancedInputPanel(
         val text = inputArea.text.trim()
         if (text.isEmpty()) return
 
+        DebugLog.info(
+            "EnhancedInputPanel",
+            "handleSubmit: running=${isRunning()}, textLength=${text.length}, fileTags=${fileTags.size}"
+        )
+
         if (isRunning()) {
             // Steer mode
             inputArea.text = ""
+            DebugLog.info("EnhancedInputPanel", "Submitting steer text to active agent, textLength=${text.length}")
             onSteer(text)
         } else {
             promptHistory.add(text)
             historyIndex = promptHistory.size
             inputArea.text = ""
+            DebugLog.info("EnhancedInputPanel", "Submitting new prompt to chat handler, textLength=${text.length}")
             onSubmit(text, fileTags.toList())
             clearTags()
         }
@@ -316,7 +334,7 @@ class EnhancedInputPanel(
      * A removable chip component for displaying a referenced file tag.
      */
     private class FileTagChip(
-        val tag: FileTag,
+        tag: FileTag,
         val onRemove: (FileTagChip) -> Unit
     ) : JPanel(FlowLayout(FlowLayout.LEFT, 2, 0)) {
 
@@ -332,14 +350,12 @@ class EnhancedInputPanel(
                 isOpaque = false
             }
             val name = JBLabel(tag.name).apply {
-                font = font.deriveFont(java.awt.Font.PLAIN, 11f)
                 isOpaque = false
             }
             val removeBtn = JButton(AllIcons.Actions.Close).apply {
                 isContentAreaFilled = false
                 isBorderPainted = false
                 isFocusPainted = false
-                margin = JBUI.insets(0)
                 preferredSize = Dimension(14, 14)
                 cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
                 toolTipText = "Remove"

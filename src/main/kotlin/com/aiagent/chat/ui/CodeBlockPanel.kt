@@ -11,6 +11,7 @@ import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBPanel
 import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
+import java.awt.Dimension
 import java.awt.FlowLayout
 import java.awt.Toolkit
 import java.awt.datatransfer.StringSelection
@@ -19,6 +20,8 @@ import java.awt.event.MouseEvent
 import javax.swing.JButton
 import javax.swing.JComponent
 import javax.swing.JPanel
+import javax.swing.ScrollPaneConstants
+import javax.swing.JScrollPane
 
 /**
  * Panel for rendering a syntax-highlighted code block using IntelliJ's EditorTextField.
@@ -146,7 +149,18 @@ class CodeBlockPanel(
             background = JBColor(0x2B2B2B, 0x1E1E1E)
         }
 
-        add(editorField, BorderLayout.CENTER)
+        // Wrap the editor in a scroll pane with a max height so long code
+        // blocks don't stretch the chat panel unbounded. A small floor avoids
+        // the panel collapsing to a sliver before the editor is realized.
+        val editorScroll = JScrollPane(editorField).apply {
+            border = JBUI.Borders.empty()
+            horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_AS_NEEDED
+            verticalScrollBarPolicy = ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED
+            preferredSize = Dimension(0, minOf(editorField.preferredSize.height + 4, 300).coerceAtLeast(36))
+            maximumSize = Dimension(Integer.MAX_VALUE, 300)
+        }
+
+        add(editorScroll, BorderLayout.CENTER)
     }
 
     companion object {

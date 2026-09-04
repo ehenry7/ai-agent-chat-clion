@@ -44,7 +44,11 @@ dependencies {
 kotlin {
     jvmToolchain(21)
 }
-
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
 intellijPlatform {
     pluginConfiguration {
         id = "com.aiagent.chat"
@@ -68,5 +72,20 @@ intellijPlatform {
     }
     publishing {
         token = providers.environmentVariable("PUBLISH_TOKEN")
+    }
+}
+
+tasks.named("runIde") {
+    doFirst {
+        println("in run Ide, clearing logFile")
+        val sandboxBase = layout.buildDirectory.dir("idea-sandbox").get().asFile
+        if (sandboxBase.exists()) {
+            sandboxBase.walkTopDown()
+                .filter { it.name == "idea.log" }
+                .forEach { logFile ->
+                    println("Deleting old log: ${logFile.absolutePath}")
+                    logFile.delete()
+                }
+        }
     }
 }

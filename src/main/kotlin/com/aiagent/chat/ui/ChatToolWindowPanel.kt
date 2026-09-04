@@ -2,6 +2,8 @@ package com.aiagent.chat.ui
 
 import com.aiagent.chat.agent.AgentDelta
 import com.aiagent.chat.agent.AgentEngine
+import com.aiagent.chat.debug.DebugLog
+import com.aiagent.chat.debug.DebugLogPanel
 import com.aiagent.chat.model.ChatMessage
 import com.aiagent.chat.model.MessageRole
 import com.aiagent.chat.model.SessionState
@@ -14,9 +16,7 @@ import com.aiagent.chat.tools.PlatformToolHandler
 import com.aiagent.chat.tools.SlashCommands
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowFactory
 import com.intellij.ui.JBColor
@@ -27,13 +27,13 @@ import com.intellij.util.ui.JBUI
 import kotlinx.coroutines.*
 import java.awt.BorderLayout
 import java.awt.CardLayout
+import java.awt.Dimension
 import java.awt.FlowLayout
 import java.awt.GridBagConstraints
-import java.awt.event.KeyAdapter
-import java.awt.event.KeyEvent
 import javax.swing.*
+import com.intellij.openapi.project.DumbAware
 
-class ChatToolWindowFactory : ToolWindowFactory {
+class ChatToolWindowFactory : ToolWindowFactory, DumbAware {
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
         val panel = ChatToolWindowPanel(project)
         val content = ContentFactory.getInstance().createContent(panel, "", false)
@@ -91,6 +91,7 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
     private val apiKeyField = JPasswordField()
 
     private var activeEngineJob: Job? = null
+    private var activeConversationId: String? = null
     private var currentPhase = "discovery"
 
     private val phaseBtn = JToggleButton("Discovery Mode").apply {
@@ -101,11 +102,30 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
         }
     }
 
+    private val debugBtn = JToggleButton("Debug").apply {
+        toolTipText = "Toggle Debug Log"
+        addActionListener {
+            debugLogPanel.isVisible = isSelected
+        }
+    }
+
+    // Debug-only button: injects a "Hello World" bubble through the exact same
+    // code path as regular chat bubbles, with verbose logging at every step.
+    private val debugBubbleBtn = JButton("DBG Bubble").apply {
+        toolTipText = "Insert a Hello World bubble using the same code path as regular messages"
+        addActionListener {
+            addDebugHelloWorldBubble()
+        }
+    }
+
     private var todoList: List<TodoItem> = emptyList()
     private val pendingSteerMessages = java.util.concurrent.ConcurrentLinkedQueue<String>()
 
     // Track the active streaming panel so we can append tokens to it
     private var activeStreamingPanel: StreamingResponsePanel? = null
+
+    // Debug log panel (collapsible)
+    private val debugLogPanel = DebugLogPanel()
 
     private val toolHandler = PlatformToolHandler(
         project = project,
@@ -147,7 +167,7 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                             weighty = 0.0
                             fill = GridBagConstraints.HORIZONTAL
                             anchor = GridBagConstraints.NORTH
-                            insets = JBUI.insets(4, 8, 4, 8)
+                            insets = JBUI.insets(6, 8, 6, 8)
                         }
                         conv.messageContainer.add(approvalPanel, constraints)
                         conv.fillerGbc.gridy = conv.currentRow
@@ -175,7 +195,7 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
         // Create initial conversation tab
         conversationTabPanel.newConversation("Chat 1")
 
-        conversationTabPanel.onTabChanged = { tabId ->
+        conversationTabPanel.onTabChanged = { _ ->
             // Could update status or save state per tab
         }
 
@@ -229,7 +249,7 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                 }
                 todoList = savedState.todoList
                 todoListPanel.updateItems(todoList)
-                savedState.uiLog.forEach { addMessageBubbleToActiveTab(it.role, it.text) }
+                savedState.uiLog.forEach { addMessageBubbleToActiveTab(it.role, it.text, recordUiLog = false) }
                 cardLayout.show(this, CHAT_CARD)
             } else {
                 cardLayout.show(this, LANDING_CARD)
@@ -331,6 +351,8 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                 add(newChatBtn)
                 add(settingsBtn)
                 add(phaseBtn)
+                add(debugBtn)
+                add(debugBubbleBtn)
             }
             add(rightPanel, BorderLayout.EAST)
         }
@@ -344,8 +366,19 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
         }
         container.add(todoScrollWrapper, BorderLayout.CENTER)
 
+        // Bottom wrapper: debug panel (toggleable) + enhanced input
+        val bottomWrapper = JPanel(BorderLayout())
+        bottomWrapper.isOpaque = false
+
+        // Debug log panel (hidden by default)
+        debugLogPanel.isVisible = false
+        debugLogPanel.preferredSize = Dimension(0, 150)
+        bottomWrapper.add(debugLogPanel, BorderLayout.NORTH)
+
         // Enhanced input panel at bottom (Phase 4 wiring)
-        container.add(enhancedInputPanel, BorderLayout.SOUTH)
+        bottomWrapper.add(enhancedInputPanel, BorderLayout.SOUTH)
+
+        container.add(bottomWrapper, BorderLayout.SOUTH)
 
         return container
     }
@@ -355,7 +388,7 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
      * Includes file tag paths in the prompt context.
      */
     private fun handlePromptSubmit(text: String, fileTags: List<EnhancedInputPanel.FileTag>) {
-        // Build the prompt with file context if tags are present
+        DebugLog.info("ChatToolWindow", "handlePromptSubmit: text length=${text.length}, fileTags=${fileTags.size}")
         val promptText = if (fileTags.isNotEmpty()) {
             val fileContext = fileTags.joinToString("\n") { "- ${it.path}" }
             "$text\n\nReferenced files:\n$fileContext"
@@ -363,20 +396,47 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
             text
         }
 
-        executePrompt(promptText)
+        DebugLog.info(
+            "ChatToolWindow",
+            "Prompt prepared for LLM: displayLength=${text.length}, enrichedLength=${promptText.length}, referencedFiles=${fileTags.map { it.path }}"
+        )
+
+        executePrompt(
+            promptText = promptText,
+            displayText = text,
+            referencedFiles = fileTags.map { it.path }
+        )
     }
 
     /**
      * Adds a message bubble to the active conversation tab.
      */
-    private fun addMessageBubbleToActiveTab(role: String, text: String) {
-        if (text.isBlank() && !role.startsWith("tool")) return
+    private fun addMessageBubbleToActiveTab(
+        role: String,
+        text: String,
+        referencedFiles: List<String> = emptyList(),
+        recordUiLog: Boolean = true
+    ) {
+        val targetConversationId = activeConversationId ?: conversationTabPanel.getActiveTabId()
+        DebugLog.info("ChatToolWindow", "addMessageBubbleToActiveTab: role=$role, textLength=${text.length}, targetConversationId=$targetConversationId, activeConversationId=$activeConversationId")
+        if (text.isBlank() && !role.startsWith("tool")) {
+            DebugLog.warn("ChatToolWindow", "addMessageBubbleToActiveTab: early return due to blank text")
+            return
+        }
 
-        val conv = conversationTabPanel.getActiveConversation()
-        conv?.uiLog?.add(UiLogEntry(role, text))
+        val conv = targetConversationId?.let { conversationTabPanel.getConversation(it) } ?: conversationTabPanel.getActiveConversation()
+        DebugLog.info("ChatToolWindow", "addMessageBubbleToActiveTab: conv=${conv?.id}, uiLog entries before=${conv?.uiLog?.size}")
+        if (recordUiLog) {
+            conv?.uiLog?.add(UiLogEntry(role, text))
+        }
 
         SwingUtilities.invokeLater {
-            val activeConv = conversationTabPanel.getActiveConversation() ?: return@invokeLater
+            val activeConv = targetConversationId?.let { conversationTabPanel.getConversation(it) } ?: conversationTabPanel.getActiveConversation()
+            DebugLog.info("ChatToolWindow", "addMessageBubbleToActiveTab [EDT]: activeConv=$activeConv, textLength=${text.length}")
+            if (activeConv == null) {
+                DebugLog.error("ChatToolWindow", "addMessageBubbleToActiveTab [EDT]: activeConv is null, cannot add message!")
+                return@invokeLater
+            }
 
             val componentToAdd: JComponent = when {
                 role.startsWith("tool") -> {
@@ -385,17 +445,21 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                     ToolCallCard(toolName, text, status)
                 }
                 role.contains("user") -> {
-                    UserMessagePanel(text)
+                    UserMessagePanel(text, referencedFiles)
                 }
                 role == "error" -> {
                     createErrorPanel(text)
                 }
                 else -> {
+                    DebugLog.info("ChatToolWindow", "addMessageBubbleToActiveTab [EDT]: creating ResponseMessagePanel with text length ${text.length}")
                     ResponseMessagePanel(text, project)
                 }
             }
 
+            DebugLog.info("ChatToolWindow", "addMessageBubbleToActiveTab [EDT]: component class=${componentToAdd.javaClass.name}, isVisible=${componentToAdd.isVisible}, preferredSize=${componentToAdd.preferredSize}")
+            DebugLog.info("ChatToolWindow", "addMessageBubbleToActiveTab [EDT]: removing fillerComponent, componentCount(beforeRemove)=${activeConv.messageContainer.componentCount}")
             activeConv.messageContainer.remove(activeConv.fillerComponent)
+            DebugLog.info("ChatToolWindow", "addMessageBubbleToActiveTab [EDT]: fillerComponent removed, componentCount(afterRemove)=${activeConv.messageContainer.componentCount}")
 
             val constraints = GridBagConstraints().apply {
                 gridx = 0
@@ -404,19 +468,29 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                 weighty = 0.0
                 fill = GridBagConstraints.HORIZONTAL
                 anchor = GridBagConstraints.NORTH
-                insets = JBUI.insets(4, 8, 4, 8)
+                insets = JBUI.insets(6, 8, 6, 8)
             }
+            DebugLog.info("ChatToolWindow", "addMessageBubbleToActiveTab [EDT]: constraints gridx=${constraints.gridx} gridy=${constraints.gridy}(row now ${activeConv.currentRow}) weightx=${constraints.weightx} weighty=${constraints.weighty} fill=${constraints.fill} anchor=${constraints.anchor}")
 
             activeConv.messageContainer.add(componentToAdd, constraints)
+            DebugLog.info("ChatToolWindow", "addMessageBubbleToActiveTab [EDT]: bubble added, componentCount(afterAdd)=${activeConv.messageContainer.componentCount}, lastComponent=${if (activeConv.messageContainer.componentCount > 0) activeConv.messageContainer.getComponent(activeConv.messageContainer.componentCount - 1).javaClass.simpleName else "N/A"}")
 
             activeConv.fillerGbc.gridy = activeConv.currentRow
             activeConv.messageContainer.add(activeConv.fillerComponent, activeConv.fillerGbc)
+            DebugLog.info("ChatToolWindow", "addMessageBubbleToActiveTab [EDT]: filler re-added at gridy=${activeConv.currentRow}, componentCount(final)=${activeConv.messageContainer.componentCount}")
 
             activeConv.messageContainer.revalidate()
+            DebugLog.info("ChatToolWindow", "addMessageBubbleToActiveTab [EDT]: revalidate() called")
             activeConv.messageContainer.repaint()
+            DebugLog.info("ChatToolWindow", "addMessageBubbleToActiveTab [EDT]: repaint() called, messageContainer size now=${activeConv.messageContainer.width}x${activeConv.messageContainer.height}")
 
-            val scrollBar = activeConv.scrollPane.verticalScrollBar
-            scrollBar.value = scrollBar.maximum
+            SwingUtilities.invokeLater {
+                val scrollBar = activeConv.scrollPane.verticalScrollBar
+                scrollBar.value = scrollBar.maximum
+                DebugLog.info("ChatToolWindow", "addMessageBubbleToActiveTab [EDT]: scrollBar.value set to ${scrollBar.value} (max=${scrollBar.maximum}), isShowing now=${componentToAdd.isShowing}, bubble bounds=${componentToAdd.bounds}")
+            }
+
+            DebugLog.info("ChatToolWindow", "addMessageBubbleToActiveTab [EDT]: component added, size=${componentToAdd.width}x${componentToAdd.height}, container size=${activeConv.messageContainer.width}x${activeConv.messageContainer.height}")
         }
     }
 
@@ -439,11 +513,92 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
             wrapStyleWord = true
             text = errorText
             background = card.background
-            border = JBUI.Borders.empty(4, 0, 0, 0)
+            border = JBUI.Borders.emptyTop(4)
         }
         card.add(titleLabel, BorderLayout.NORTH)
         card.add(body, BorderLayout.CENTER)
         return card
+    }
+
+    /**
+     * Debug-only entry point: creates a "Hello World" bubble through the exact
+     * same pipeline as a regular assistant message and logs every single step.
+     * Does NOT change any production logic — purely diagnostic.
+     */
+    private fun addDebugHelloWorldBubble() {
+        DebugLog.info("DebugBubble", "==================== DEBUG BUBBLE TRIGGERED ====================")
+        DebugLog.info("DebugBubble", "isEventDispatchThread=${SwingUtilities.isEventDispatchThread()}")
+        DebugLog.info("DebugBubble", "activeConversationId=$activeConversationId, currentPhase=$currentPhase")
+
+        val activeConv = conversationTabPanel.getActiveConversation()
+        DebugLog.info("DebugBubble", "activeConv (pre-lookup)=$activeConv")
+        if (activeConv == null) {
+            DebugLog.error("DebugBubble", "NO ACTIVE CONVERSATION FOUND - aborting before bubble creation")
+            return
+        }
+        DebugLog.info("DebugBubble", "conv.id=${activeConv.id}")
+        DebugLog.info("DebugBubble", "conv.messageContainer class=${activeConv.messageContainer.javaClass.name}")
+        DebugLog.info("DebugBubble", "conv.messageContainer size=${activeConv.messageContainer.width}x${activeConv.messageContainer.height}")
+        DebugLog.info("DebugBubble", "conv.messageContainer isDisplayable=${activeConv.messageContainer.isDisplayable}, isShowing=${activeConv.messageContainer.isShowing}, isVisible=${activeConv.messageContainer.isVisible}")
+        DebugLog.info("DebugBubble", "conv.currentRow=${activeConv.currentRow}, componentCount(before)=${activeConv.messageContainer.componentCount}")
+        DebugLog.info("DebugBubble", "conv.scrollPane=${activeConv.scrollPane.javaClass.simpleName}, viewportSize=${activeConv.scrollPane.viewport.width}x${activeConv.scrollPane.viewport.height}")
+        DebugLog.info("DebugBubble", "conv.history.size=${activeConv.history.size}, uiLog.size=${activeConv.uiLog.size}")
+
+        val helloText = "Hello World! Debug bubble ${System.currentTimeMillis()}\n" +
+            "Second line of the debug message to force multi-line HTML layout."
+        DebugLog.info("DebugBubble", "helloText.length=${helloText.length}")
+        DebugLog.info("DebugBubble", "calling addMessageBubbleToActiveTab(role='assistant', recordUiLog=false) on EDT=${SwingUtilities.isEventDispatchThread()}")
+
+        addMessageBubbleToActiveTab("assistant", helloText, recordUiLog = false)
+
+        DebugLog.info("DebugBubble", "addMessageBubbleToActiveTab returned synchronously")
+        DebugLog.info("DebugBubble", "componentCount(after)=${activeConv.messageContainer.componentCount} (bubble body may still be queued in invokeLater)")
+
+        // Step 1: log as soon as the invokeLater body queued by
+        // addMessageBubbleToActiveTab has actually run.
+        SwingUtilities.invokeLater {
+            DebugLog.info("DebugBubble", "EDT-after-add step: isEDT=${SwingUtilities.isEventDispatchThread()}, componentCount=${activeConv.messageContainer.componentCount}")
+            logComponentTree(activeConv.messageContainer, indent = "  ")
+        }
+
+        // Step 2: dump the full component tree again once layout has settled,
+        // so we can see the final bounds/font/colors of the bubble and its text.
+        javax.swing.Timer(1200) {
+            DebugLog.info("DebugBubble", "TIMER 1200ms: componentCount=${activeConv.messageContainer.componentCount}")
+            logComponentTree(activeConv.messageContainer, indent = "  ")
+        }.apply { isRepeats = false }.start()
+    }
+
+    /**
+     * Recursively logs the class, bounds, visibility, font and foreground of a
+     * component and all of its children. Used to spot the exact node where the
+     * text becomes invisible (zero size, hidden, wrong color, wrong font).
+     */
+    private fun logComponentTree(component: javax.swing.JComponent, indent: String) {
+        val fontInfo = component.font?.let { "font='${it.fontName}' size=${it.size} style=${it.style}" } ?: "font=null"
+        val fg = component.foreground
+        val fgInfo = if (fg != null) "#%06X".format(fg.rgb and 0xFFFFFF) else "null"
+        val bg = component.background
+        val bgInfo = if (bg != null) "#%06X".format(bg.rgb and 0xFFFFFF) else "null"
+        val peerInfo = if (component is javax.swing.JTextPane) {
+            " docLen=${component.document.length} textLen=${component.text?.length} contentType=${component.contentType}"
+        } else {
+            ""
+        }
+        DebugLog.info(
+            "DebugBubble",
+            "$indent${component.javaClass.simpleName} bounds=${component.x},${component.y} ${component.width}x${component.height} " +
+                "pref=${component.preferredSize.width}x${component.preferredSize.height} " +
+                "visible=${component.isVisible} showing=${component.isShowing} opaque=${component.isOpaque} " +
+                "fg=$fgInfo bg=$bgInfo $fontInfo$peerInfo"
+        )
+        for (child in component.components) {
+            if (child is javax.swing.JComponent) {
+                logComponentTree(child, indent + "    ")
+            } else {
+                DebugLog.info("DebugBubble", "$indent    ${child.javaClass.simpleName} bounds=${child.bounds} visible=${child.isVisible}")
+            }
+        }
     }
 
     /**
@@ -455,78 +610,84 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
             panel.finalize()
             activeStreamingPanel = null
         }
+        activeConversationId = null
         SwingUtilities.invokeLater {
             statusLabel.text = "Stopped"
             enhancedInputPanel.updateRunningState(false)
         }
     }
 
-    private fun executePrompt(promptText: String) {
-        // Make sure we're on the chat card
+    private fun executePrompt(promptText: String, displayText: String = promptText, referencedFiles: List<String> = emptyList()) {
+        DebugLog.info("ChatToolWindow", "=== EXECUTE PROMPT ===")
+        DebugLog.info("ChatToolWindow", "Prompt: ${promptText.take(200)}")
+        DebugLog.info("ChatToolWindow", "Settings - baseUrl: ${settings.state.baseUrl}, model: ${settings.state.model}, apiKey set: ${settings.isApiKeySet()}")
         cardLayout.show(this, CHAT_CARD)
 
-        addMessageBubbleToActiveTab("user", promptText)
+        activeConversationId = conversationTabPanel.getActiveTabId()
+        DebugLog.info("ChatToolWindow", "Active conversation locked for run: $activeConversationId")
+        addMessageBubbleToActiveTab("user", displayText, referencedFiles)
 
         if (promptText.startsWith("/")) {
             val res = SlashCommands.processCommand(promptText, project.basePath ?: "")
             if (res != null) {
+                DebugLog.info("ChatToolWindow", "Slash command handled locally, returning response length=${res.length}")
                 addMessageBubbleToActiveTab("assistant", res)
+                activeConversationId = null
                 return
             }
         }
 
         val userMsg = ChatMessage(MessageRole.USER, promptText)
+        DebugLog.info("ChatToolWindow", "User message created for LLM request, contentLength=${promptText.length}")
         statusLabel.text = "Agent running..."
         enhancedInputPanel.updateRunningState(true)
 
         activeEngineJob = scope.launch {
+            DebugLog.info("ChatToolWindow", "Creating ApiClient with baseUrl=${settings.state.baseUrl}, model=${settings.state.model}")
             val client = ApiClient(
                 baseUrl = settings.state.baseUrl,
                 apiKey = settings.getApiKey() ?: "",
                 model = settings.state.model
             )
+            DebugLog.info("ChatToolWindow", "ApiClient created (non-streaming mode), no streaming panel needed")
 
-            // Create a streaming response panel and add it to the active tab
-            val streamingPanel = StreamingResponsePanel(project)
-            activeStreamingPanel = streamingPanel
-
-            SwingUtilities.invokeLater {
-                val conv = conversationTabPanel.getActiveConversation() ?: return@invokeLater
-                conv.messageContainer.remove(conv.fillerComponent)
-
-                val constraints = GridBagConstraints().apply {
-                    gridx = 0
-                    gridy = conv.currentRow++
-                    weightx = 1.0
-                    weighty = 0.0
-                    fill = GridBagConstraints.HORIZONTAL
-                    anchor = GridBagConstraints.NORTH
-                    insets = JBUI.insets(4, 8, 4, 8)
-                }
-                conv.messageContainer.add(streamingPanel, constraints)
-                conv.fillerGbc.gridy = conv.currentRow
-                conv.messageContainer.add(conv.fillerComponent, conv.fillerGbc)
-                conv.messageContainer.revalidate()
-                conv.messageContainer.repaint()
-            }
+            // Note: In non-streaming mode, we don't create a streaming placeholder panel.
+            // The actual response will be added when AgentDelta.Assistant arrives.
+            // This avoids the issue of leftover streaming panels with empty content.
 
             val engine = AgentEngine(
                 client = client,
-                toolExecutor = { name, args -> toolHandler.execute(name, args) },
+                toolExecutor = { name, args ->
+                    DebugLog.info("AgentEngine", "Executing tool: $name")
+                    val result = toolHandler.execute(name, args)
+                    DebugLog.info("AgentEngine", "Tool $name completed, result length: ${result.length}")
+                    result
+                },
                 onDelta = { delta ->
                     when (delta) {
-                        is AgentDelta.Status -> SwingUtilities.invokeLater { statusLabel.text = delta.text }
+                        is AgentDelta.Status -> {
+                            DebugLog.info("AgentEngine", "Status: ${delta.text}")
+                            SwingUtilities.invokeLater { statusLabel.text = delta.text }
+                        }
                         is AgentDelta.Assistant -> {
-                            // Final assistant text (non-streaming fallback or post-tool-call text)
-                            // Finalize the streaming panel if active, then add the full message
+                            DebugLog.info("AgentEngine", "Assistant response received, length=${delta.text.length}")
+                            // Remove the streaming placeholder and add the actual response
                             activeStreamingPanel?.let { panel ->
-                                panel.finalize()
-                                activeStreamingPanel = null
+                                SwingUtilities.invokeLater {
+                                    val parent = panel.parent
+                                    if (parent is JPanel) {
+                                        parent.remove(panel)
+                                        parent.revalidate()
+                                        parent.repaint()
+                                    }
+                                }
                             }
+                            activeStreamingPanel = null
+                            DebugLog.info("AgentEngine", "Rendering assistant response into conversation $activeConversationId")
                             addMessageBubbleToActiveTab("assistant", delta.text)
                         }
                         is AgentDelta.ToolOutput -> {
-                            // Finalize streaming panel before showing tool output
+                            DebugLog.info("AgentEngine", "Tool output: ${delta.name} - ${delta.text.take(80)}...")
                             activeStreamingPanel?.let { panel ->
                                 panel.finalize()
                                 activeStreamingPanel = null
@@ -534,21 +695,21 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                             addMessageBubbleToActiveTab("tool: ${delta.name}", delta.text)
                         }
                         is AgentDelta.StreamingStart -> {
-                            // Streaming starts — panel already added
+                            DebugLog.info("AgentEngine", "Streaming started")
                         }
                         is AgentDelta.StreamingContent -> {
-                            // Append token to the streaming panel
-                            streamingPanel.appendText(delta.text)
+                            DebugLog.info("AgentEngine", "Streaming content: ${delta.text.take(50)}...")
+                            activeStreamingPanel?.appendText(delta.text)
                         }
                         is AgentDelta.StreamingEnd -> {
-                            // Streaming finished — finalize the panel into a full ResponseMessagePanel
+                            DebugLog.info("AgentEngine", "Streaming ended, fullText length: ${delta.fullText.length}")
                             if (delta.fullText.isNotBlank()) {
                                 activeStreamingPanel?.let { panel ->
                                     panel.finalize()
                                     activeStreamingPanel = null
                                 }
                             } else {
-                                // Empty stream — remove the streaming panel
+                                DebugLog.warn("AgentEngine", "Streaming ended with empty content!")
                                 activeStreamingPanel?.let { panel ->
                                     SwingUtilities.invokeLater {
                                         panel.parent?.remove(panel)
@@ -564,9 +725,12 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
             )
 
             try {
+                DebugLog.info("AgentEngine", "Starting agent loop, phase: $currentPhase")
                 val activeConv = conversationTabPanel.getActiveConversation()
-                val tabHistory = activeConv?.history ?: mutableListOf()
-                val tabUiLog = activeConv?.uiLog ?: mutableListOf()
+                val targetConv = activeConversationId?.let { conversationTabPanel.getConversation(it) } ?: activeConv
+                val tabHistory = targetConv?.history ?: mutableListOf()
+                val tabUiLog = targetConv?.uiLog ?: mutableListOf()
+                DebugLog.info("AgentEngine", "Conversation state before run: historySize=${tabHistory.size}, uiLogSize=${tabUiLog.size}, targetConv=${targetConv?.id}")
 
                 val newMsgs = engine.runAgentLoopStreaming(
                     initialHistory = tabHistory.toList(),
@@ -584,6 +748,7 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                     },
                     steerProvider = { pendingSteerMessages.poll() }
                 )
+                DebugLog.info("AgentEngine", "Agent loop finished: newMessages=${newMsgs.size}")
                 tabHistory.addAll(newMsgs)
                 persistence.saveSession(
                     SessionState(
@@ -593,23 +758,27 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                         savedAt = System.currentTimeMillis()
                     )
                 )
+                DebugLog.info("AgentEngine", "Session saved: historySize=${tabHistory.size}, uiLogSize=${tabUiLog.size}")
             } catch (e: Exception) {
-                // Clean up any active streaming panel
+                val errorMsg = e.message ?: e::class.simpleName ?: "Unknown error"
+                DebugLog.error("AgentEngine", "Agent loop failed: $errorMsg", e)
                 activeStreamingPanel?.let { panel ->
                     panel.finalize()
                     activeStreamingPanel = null
                 }
-                addMessageBubbleToActiveTab("error", e.message ?: "Failed")
+                addMessageBubbleToActiveTab("error", errorMsg)
             } finally {
                 // Ensure streaming panel is cleaned up
                 activeStreamingPanel?.let { panel ->
                     panel.finalize()
                     activeStreamingPanel = null
                 }
+                activeConversationId = null
                 SwingUtilities.invokeLater {
                     statusLabel.text = "Ready"
                     enhancedInputPanel.updateRunningState(false)
                 }
+                DebugLog.info("AgentEngine", "Prompt execution finished and UI reset")
             }
         }
     }

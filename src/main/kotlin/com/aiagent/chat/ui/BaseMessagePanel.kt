@@ -15,6 +15,7 @@ import javax.swing.JButton
 import javax.swing.JComponent
 import javax.swing.JLabel
 import javax.swing.JPanel
+import javax.swing.SwingUtilities
 
 /**
  * Abstract base panel for chat message bubbles.
@@ -33,17 +34,24 @@ abstract class BaseMessagePanel(
     private var bodyComponent: JComponent? = null
 
     init {
+        com.aiagent.chat.debug.DebugLog.info("BaseMessagePanel", "init START: displayName='$displayName', role='$role', bubbleBackground=${getBubbleBackground()}, isEDT=${SwingUtilities.isEventDispatchThread()}")
         border = JBUI.Borders.compound(
             JBUI.Borders.customLine(JBColor.border(), 1),
             JBUI.Borders.empty(8, 12)
         )
         background = getBubbleBackground()
+        com.aiagent.chat.debug.DebugLog.info("BaseMessagePanel", "init: border=$border, background=$background")
 
         buildHeader()
-        buildBody()
 
         add(headerPanel, BorderLayout.NORTH)
         add(bodyContainer, BorderLayout.CENTER)
+        com.aiagent.chat.debug.DebugLog.info("BaseMessagePanel", "init: headerPanel (NORTH) + bodyContainer (CENTER) added, headerPanel size=${headerPanel.width}x${headerPanel.height}")
+
+        // buildBody() is NOT called here — subclasses must call it from their
+        // own init{} block so that subclass constructor properties (messageText,
+        // project, etc.) are initialized before buildBody() runs.
+        com.aiagent.chat.debug.DebugLog.info("BaseMessagePanel", "init END: preferredSize=${preferredSize}, componentCount=${components.size}")
     }
 
     private fun buildHeader() {
@@ -62,6 +70,7 @@ abstract class BaseMessagePanel(
         headerPanel.add(leftPanel, BorderLayout.WEST)
         headerPanel.add(actionsPanel, BorderLayout.EAST)
         headerPanel.isOpaque = false
+        headerPanel.border = JBUI.Borders.emptyBottom(4)
 
         buildActions()
     }
@@ -99,12 +108,17 @@ abstract class BaseMessagePanel(
     protected abstract fun buildBody()
 
     protected fun setBodyContent(component: JComponent) {
-        bodyComponent?.let { bodyContainer.remove(it) }
-        bodyComponent = component
-        bodyContainer.add(component, BorderLayout.CENTER)
-        bodyContainer.isOpaque = false
-        revalidate()
-        repaint()
+        try {
+            bodyComponent?.let { bodyContainer.remove(it) }
+            bodyComponent = component
+            bodyContainer.add(component, BorderLayout.CENTER)
+            bodyContainer.isOpaque = false
+            revalidate()
+            repaint()
+            com.aiagent.chat.debug.DebugLog.info("BaseMessagePanel", "setBodyContent: component class=${component.javaClass.name}, preferredSize=${component.preferredSize}, bodyContainer size=${bodyContainer.width}x${bodyContainer.height}")
+        } catch (e: Exception) {
+            com.aiagent.chat.debug.DebugLog.error("BaseMessagePanel", "setBodyContent failed: ${e.message}", e)
+        }
     }
 
     protected abstract fun getRoleIcon(): javax.swing.Icon

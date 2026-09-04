@@ -1,5 +1,6 @@
 package com.aiagent.chat.net
 
+import com.aiagent.chat.debug.DebugLog
 import com.aiagent.chat.model.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.future.await
@@ -37,6 +38,7 @@ class ApiClient(
         val now = System.currentTimeMillis()
         val elapsed = now - lastCallTimeMs
         if (elapsed < minIntervalMs) {
+            DebugLog.info("ApiClient", "Rate limiting: sleeping ${minIntervalMs - elapsed}ms")
             Thread.sleep(minIntervalMs - elapsed)
         }
         lastCallTimeMs = System.currentTimeMillis()
@@ -65,15 +67,22 @@ class ApiClient(
             } catch (e: Throwable) {
                 lastError = e
                 val statusCode = (e as? ApiException)?.statusCode
+                val errorDesc = e.message ?: e::class.simpleName ?: "Unknown error"
                 if (!isRetriableError(e, statusCode) || attempt >= maxAttempts) {
+                    DebugLog.error("ApiClient", "chat failed (non-retriable or max attempts): $errorDesc")
                     throw e
                 }
                 val delay = retryDelayMs * attempt
-                onRetry?.invoke(attempt, e.message ?: "Unknown error", delay)
+                DebugLog.warn("ApiClient", "chat failed (attempt $attempt/$maxAttempts), retrying in ${delay}ms: $errorDesc")
+                onRetry?.invoke(attempt, errorDesc, delay)
                 delay(delay)
             }
         }
-        throw lastError ?: RuntimeException("Network call failed")
+        val finalError = lastError
+        if (finalError != null) {
+            throw finalError
+        }
+        throw RuntimeException("Network call failed")
     }
 
     private suspend fun chatOnce(messages: List<ChatMessage>, tools: List<ToolDefinition>?): ChatMessage {
@@ -81,6 +90,11 @@ class ApiClient(
         val endpoint = URI.create("${baseUrl.trimEnd('/')}/chat/completions")
         val reqPayload = ChatCompletionRequest(model = model, messages = messages, tools = tools)
         val bodyStr = json.encodeToString(reqPayload)
+        DebugLog.info("ApiClient", "=== NON-STREAMING REQUEST ===")
+        DebugLog.info("ApiClient", "URL: $endpoint")
+        DebugLog.info("ApiClient", "Model: $model")
+        DebugLog.info("ApiClient", "Messages (${messages.size}): ${messages.take(3).joinToString { "${it.role}: ${it.content?.take(100) ?: "[tool_calls]"}" }.take(500)}")
+        DebugLog.info("ApiClient", "Request body: ${bodyStr.take(1000)}")
 
         val request = HttpRequest.newBuilder()
             .uri(endpoint)
@@ -92,15 +106,23 @@ class ApiClient(
             .POST(HttpRequest.BodyPublishers.ofString(bodyStr))
             .build()
 
+        DebugLog.info("ApiClient", "Sending HTTP request...")
         val response = client.sendAsync(request, HttpResponse.BodyHandlers.ofString()).await()
         val status = response.statusCode()
         val respBody = response.body()
 
+        DebugLog.info("ApiClient", "=== NON-STREAMING RESPONSE ===")
+        DebugLog.info("ApiClient", "Status: $status")
+        DebugLog.info("ApiClient", "Response body: ${respBody.take(2000)}")
+
         if (status !in 200..299) {
-            throw ApiException(status, "API error $status: ${sanitizeForLog(respBody)}")
+            val errorMsg = "API error $status: ${sanitizeForLog(respBody)}"
+            DebugLog.error("ApiClient", errorMsg)
+            throw ApiException(status, errorMsg)
         }
 
         val parsed = json.decodeFromString<ChatCompletionResponse>(respBody)
+        DebugLog.info("ApiClient", "Non-streaming response received, ${parsed.choices.size} choices")
         return parsed.choices.firstOrNull()?.message
             ?: throw ApiException(status, "Malformed API response: no choices returned")
     }
@@ -124,15 +146,22 @@ class ApiClient(
             } catch (e: Throwable) {
                 lastError = e
                 val statusCode = (e as? ApiException)?.statusCode
+                val errorDesc = e.message ?: e::class.simpleName ?: "Unknown error"
                 if (!isRetriableError(e, statusCode) || attempt >= maxAttempts) {
+                    DebugLog.error("ApiClient", "chatStream failed (non-retriable or max attempts): $errorDesc")
                     throw e
                 }
                 val delay = retryDelayMs * attempt
-                onRetry?.invoke(attempt, e.message ?: "Unknown error", delay)
+                DebugLog.warn("ApiClient", "chatStream failed (attempt $attempt/$maxAttempts), retrying in ${delay}ms: $errorDesc")
+                onRetry?.invoke(attempt, errorDesc, delay)
                 delay(delay)
             }
         }
-        throw lastError ?: RuntimeException("Network call failed")
+        val finalError = lastError
+        if (finalError != null) {
+            throw finalError
+        }
+        throw RuntimeException("Network call failed")
     }
 
     private suspend fun chatStreamOnce(
@@ -144,6 +173,12 @@ class ApiClient(
         val endpoint = URI.create("${baseUrl.trimEnd('/')}/chat/completions")
         val reqPayload = ChatCompletionRequest(model = model, messages = messages, tools = tools, stream = true)
         val bodyStr = json.encodeToString(reqPayload)
+        DebugLog.info("ApiClient", "=== STREAMING REQUEST ===")
+        DebugLog.info("ApiClient", "URL: $endpoint")
+        DebugLog.info("ApiClient", "Model: $model")
+        DebugLog.info("ApiClient", "Messages (${messages.size}): ${messages.take(3).joinToString { "${it.role}: ${it.content?.take(100) ?: "[tool_calls]"}" }.take(500)}")
+        DebugLog.info("ApiClient", "Tools: ${tools?.size ?: 0}")
+        DebugLog.info("ApiClient", "Request body: ${bodyStr.take(1000)}")
 
         val request = HttpRequest.newBuilder()
             .uri(endpoint)
@@ -156,41 +191,51 @@ class ApiClient(
             .POST(HttpRequest.BodyPublishers.ofString(bodyStr))
             .build()
 
-        // Use BodyHandlers.ofLines for SSE streaming
+        DebugLog.info("ApiClient", "Sending HTTP request, awaiting SSE stream...")
         val response = client.sendAsync(request, HttpResponse.BodyHandlers.ofLines()).await()
         val status = response.statusCode()
+        DebugLog.info("ApiClient", "=== STREAMING RESPONSE ===")
+        DebugLog.info("ApiClient", "Status: $status")
 
         if (status !in 200..299) {
             val body = response.body().map { it }.toList().joinToString("")
-            throw ApiException(status, "API error $status: ${sanitizeForLog(body)}")
+            DebugLog.error("ApiClient", "Non-2xx response: $status, body: ${body.take(1000)}")
+            val errorMsg = "API error $status: ${sanitizeForLog(body)}"
+            DebugLog.error("ApiClient", errorMsg)
+            throw ApiException(status, errorMsg)
         }
 
-        // Accumulate the streamed response
+        DebugLog.info("ApiClient", "SSE stream opened, processing chunks...")
         val contentBuilder = StringBuilder()
-        val toolCallBuilders = mutableMapOf<Int, StringBuilder>() // index -> arguments
+        val toolCallBuilders = mutableMapOf<Int, StringBuilder>()
         val toolCallIds = mutableMapOf<Int, String>()
         val toolCallNames = mutableMapOf<Int, String>()
         var finishReason: String? = null
+        var chunkCount = 0
+        val allLines = mutableListOf<String>()
 
         response.body()
             .filter { it.startsWith("data: ") }
             .forEach { line ->
+                allLines.add(line)
                 val data = line.removePrefix("data: ").trim()
-                if (data == "[DONE]") return@forEach
+                if (data == "[DONE]") {
+                    DebugLog.info("ApiClient", "SSE stream received [DONE]")
+                    return@forEach
+                }
 
                 try {
                     val chunk = json.decodeFromString<ChatCompletionChunk>(data)
                     val choice = chunk.choices.firstOrNull() ?: return@forEach
                     val delta = choice.delta
+                    chunkCount++
 
                     if (delta != null) {
-                        // Content delta
                         if (!delta.content.isNullOrEmpty()) {
                             contentBuilder.append(delta.content)
                             onChunk(StreamChunk.Content(delta.content))
                         }
 
-                        // Tool call deltas
                         if (!delta.toolCalls.isNullOrEmpty()) {
                             for (tc in delta.toolCalls) {
                                 val idx = tc.index
@@ -207,13 +252,18 @@ class ApiClient(
                     if (choice.finishReason != null) {
                         finishReason = choice.finishReason
                     }
-                } catch (_: Exception) {
-                    // Skip malformed chunks
+                } catch (e: Exception) {
+                    DebugLog.warn("ApiClient", "Failed to parse SSE chunk: ${e.message}, raw: ${data.take(100)}")
                 }
             }
 
-        // Build the final ChatMessage
-        val toolCalls = if (toolCallBuilders.isNotEmpty()) {
+        DebugLog.info("ApiClient", "=== STREAM COMPLETE ===")
+        DebugLog.info("ApiClient", "Total SSE lines received: ${allLines.size}")
+        DebugLog.info("ApiClient", "Total chunks parsed: $chunkCount")
+        DebugLog.info("ApiClient", "Content length: ${contentBuilder.length}")
+        DebugLog.info("ApiClient", "Content preview: ${contentBuilder.toString().take(500)}")
+        DebugLog.info("ApiClient", "Finish reason: $finishReason")
+        val assembledToolCalls = if (toolCallBuilders.isNotEmpty()) {
             toolCallBuilders.entries.sortedBy { it.key }.map { (idx, args) ->
                 ToolCall(
                     id = toolCallIds[idx] ?: "call_$idx",
@@ -225,11 +275,15 @@ class ApiClient(
                 )
             }
         } else null
+        DebugLog.info("ApiClient", "Tool calls: ${assembledToolCalls?.size ?: 0}")
+        assembledToolCalls?.forEachIndexed { idx, tc ->
+            DebugLog.info("ApiClient", "  ToolCall[$idx]: ${tc.function.name}(${tc.function.arguments.take(100)})")
+        }
 
         return ChatMessage(
             role = MessageRole.ASSISTANT,
             content = contentBuilder.toString().ifEmpty { null },
-            toolCalls = toolCalls
+            toolCalls = assembledToolCalls
         )
     }
 

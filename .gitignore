@@ -17,6 +17,10 @@ AGENTS.md
 .editorconfig
 .proxyai/
 proxy/
+.refact/
+.kotlin/
+*.log
+
 
 # Scratch files and generated bundles
 project-bundle-*.md
