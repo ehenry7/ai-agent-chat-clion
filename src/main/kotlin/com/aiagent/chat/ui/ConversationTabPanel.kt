@@ -190,7 +190,10 @@ class ConversationTabPanel : JBPanel<ConversationTabPanel>(BorderLayout()) {
 
     fun getAllConversations(): List<Conversation> = conversations.values.toList()
 
-    private fun createIconButton(icon: javax.swing.Icon, tooltip: String, onClick: () -> Unit): JButton {
+    /**
+     * Creates a small icon-only button with no border or content fill.
+     */
+    private fun createIconButton(icon: Icon, tooltip: String, onClick: () -> Unit): JButton {
         return JButton(icon).apply {
             toolTipText = tooltip
             isContentAreaFilled = false
@@ -203,6 +206,9 @@ class ConversationTabPanel : JBPanel<ConversationTabPanel>(BorderLayout()) {
         }
     }
 
+    /**
+     * Shows a popup with details about the active session.
+     */
     private fun showSessionInfo() {
         val conv = getActiveConversation()
         val popup = JPopupMenu()
@@ -211,8 +217,8 @@ class ConversationTabPanel : JBPanel<ConversationTabPanel>(BorderLayout()) {
         } else {
             popup.add(JLabel("Title: ${conv.title}"))
             popup.add(JLabel("ID: ${conv.id}"))
-            popup.add(JLabel("Messages: ${conv.history.size}"))
-            popup.add(JLabel("Log entries: ${conv.uiLog.size}"))
+            popup.add(JLabel("History: ${conv.history.size} messages"))
+            popup.add(JLabel("UI Log: ${conv.uiLog.size} entries"))
         }
         popup.show(this, 0, 0)
     }
