@@ -106,6 +106,9 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
     private val stateMachine = SessionStateMachine()
     private val commandQueue = CommandQueue()
 
+    // --- Plan manager (tool-expansion) ---
+    private val planManager = com.aiagent.chat.agent.PlanManager()
+
     // --- Usage tracking (context/token/memory summary UI) ---
     private val usageTracker = UsageTracker(maxContextTokens = 32768)
     private val usageCounterPanel = UsageCounterPanel(maxContextTokens = 32768)
@@ -177,7 +180,9 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                 return result
             }
         },
-        approvalMode = approvalMode
+        approvalMode = approvalMode,
+        askQuestionsHandler = com.aiagent.chat.tools.AskQuestionsHandler(project),
+        planManager = planManager
     )
 
     init {
@@ -654,6 +659,24 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                 model = settings.state.model
             )
 
+            val contextCompactor = ContextCompactor(client)
+
+            // Wire up message access for compress_chat tools
+            toolHandler.contextCompactor = contextCompactor
+            toolHandler.bindMessagesAccessor(
+                getMessages = {
+                    val conv = activeConversationId?.let { conversationTabPanel.getConversation(it) } ?: conversationTabPanel.getActiveConversation()
+                    conv?.history?.toList() ?: emptyList()
+                },
+                setMessages = { newMessages ->
+                    val conv = activeConversationId?.let { conversationTabPanel.getConversation(it) } ?: conversationTabPanel.getActiveConversation()
+                    if (conv != null) {
+                        conv.history.clear()
+                        conv.history.addAll(newMessages)
+                    }
+                }
+            )
+
             val engine = AgentEngine(
                 client = client,
                 toolExecutor = { name, args ->
@@ -662,7 +685,8 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                     DebugLog.info("AgentEngine", "Tool $name completed, result length: ${result.length}")
                     result
                 },
-                contextCompactor = ContextCompactor(client),
+                contextCompactor = contextCompactor,
+                planManager = planManager,
                 onDelta = { delta ->
                     when (delta) {
                         is AgentDelta.Status -> {

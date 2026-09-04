@@ -285,6 +285,151 @@ object ToolRegistry {
             category = ToolCategory.MUTATING
         ),
 
+        // === Additional READ_ONLY tools (tool-expansion) ===
+        ToolDeclaration(
+            definition = ToolDefinition(function = ToolFunctionDef(
+                name = "tree",
+                description = "Show project file tree with file sizes and line counts. Excludes build artifacts, .git, node_modules, etc.",
+                parameters = paramsObject {
+                    put("type", "object")
+                    putJsonObject("properties") {
+                        putJsonObject("path") { put("type", "string") }
+                        putJsonObject("maxDepth") { put("type", "integer") }
+                        putJsonObject("includeHidden") { put("type", "boolean") }
+                    }
+                }
+            )),
+            category = ToolCategory.READ_ONLY
+        ),
+        ToolDeclaration(
+            definition = ToolDefinition(function = ToolFunctionDef(
+                name = "ask_questions",
+                description = "Ask the user structured questions (yes_no, single_select, multi_select, free_text). Blocks until the user answers.",
+                parameters = paramsObject {
+                    put("type", "object")
+                    putJsonObject("properties") {
+                        putJsonObject("question") { put("type", "string") }
+                        putJsonObject("question_type") { put("type", "string") }
+                        putJsonObject("options") {
+                            put("type", "array")
+                            putJsonObject("items") { put("type", "string") }
+                        }
+                    }
+                    putJsonArray("required") { add("question"); add("question_type") }
+                }
+            )),
+            category = ToolCategory.READ_ONLY
+        ),
+        ToolDeclaration(
+            definition = ToolDefinition(function = ToolFunctionDef(
+                name = "sleep",
+                description = "Pause execution for a specified number of seconds (useful when waiting for builds or external processes).",
+                parameters = paramsObject {
+                    put("type", "object")
+                    putJsonObject("properties") { putJsonObject("seconds") { put("type", "number") } }
+                    putJsonArray("required") { add("seconds") }
+                }
+            )),
+            category = ToolCategory.READ_ONLY
+        ),
+        ToolDeclaration(
+            definition = ToolDefinition(function = ToolFunctionDef(
+                name = "compress_chat_probe",
+                description = "Check if context compaction is needed. Returns current message count, estimated tokens, and a recommendation.",
+                parameters = paramsObject { put("type", "object") }
+            )),
+            category = ToolCategory.READ_ONLY
+        ),
+        ToolDeclaration(
+            definition = ToolDefinition(function = ToolFunctionDef(
+                name = "compress_chat_apply",
+                description = "Trigger context compaction now. Summarizes old messages into a compact summary, keeping recent messages intact.",
+                parameters = paramsObject { put("type", "object") }
+            )),
+            category = ToolCategory.READ_ONLY
+        ),
+        ToolDeclaration(
+            definition = ToolDefinition(function = ToolFunctionDef(
+                name = "set_plan",
+                description = "Create or replace the current task plan from a markdown checklist. The plan is injected into the system prompt each turn to keep the agent focused.",
+                parameters = paramsObject {
+                    put("type", "object")
+                    putJsonObject("properties") { putJsonObject("plan") { put("type", "string") } }
+                    putJsonArray("required") { add("plan") }
+                }
+            )),
+            category = ToolCategory.READ_ONLY
+        ),
+        ToolDeclaration(
+            definition = ToolDefinition(function = ToolFunctionDef(
+                name = "get_plan",
+                description = "Retrieve the current task plan as a markdown checklist.",
+                parameters = paramsObject { put("type", "object") }
+            )),
+            category = ToolCategory.READ_ONLY
+        ),
+        ToolDeclaration(
+            definition = ToolDefinition(function = ToolFunctionDef(
+                name = "update_plan",
+                description = "Update the status of a plan step. Use step IDs from get_plan.",
+                parameters = paramsObject {
+                    put("type", "object")
+                    putJsonObject("properties") {
+                        putJsonObject("step_id") { put("type", "string") }
+                        putJsonObject("status") { put("type", "string") }
+                    }
+                    putJsonArray("required") { add("step_id"); add("status") }
+                }
+            )),
+            category = ToolCategory.READ_ONLY
+        ),
+
+        // === Additional MUTATING tools (tool-expansion) ===
+        ToolDeclaration(
+            definition = ToolDefinition(function = ToolFunctionDef(
+                name = "update_textdoc_by_lines",
+                description = "Replace a specific line range in a file with new content. More deterministic than edit_file when line numbers are known.",
+                parameters = paramsObject {
+                    put("type", "object")
+                    putJsonObject("properties") {
+                        putJsonObject("path") { put("type", "string") }
+                        putJsonObject("startLine") { put("type", "integer") }
+                        putJsonObject("endLine") { put("type", "integer") }
+                        putJsonObject("content") { put("type", "string") }
+                    }
+                    putJsonArray("required") { add("path"); add("startLine"); add("endLine"); add("content") }
+                }
+            )),
+            category = ToolCategory.MUTATING
+        ),
+        ToolDeclaration(
+            definition = ToolDefinition(function = ToolFunctionDef(
+                name = "undo_textdoc",
+                description = "Undo the last file modification made by any editing tool (write_file, edit_file, update_textdoc_by_lines, apply_diff). Restores the previous content.",
+                parameters = paramsObject {
+                    put("type", "object")
+                    putJsonObject("properties") { putJsonObject("path") { put("type", "string") } }
+                }
+            )),
+            category = ToolCategory.MUTATING
+        ),
+        ToolDeclaration(
+            definition = ToolDefinition(function = ToolFunctionDef(
+                name = "mv",
+                description = "Move or rename a file/directory. Supports overwrite flag.",
+                parameters = paramsObject {
+                    put("type", "object")
+                    putJsonObject("properties") {
+                        putJsonObject("source") { put("type", "string") }
+                        putJsonObject("destination") { put("type", "string") }
+                        putJsonObject("overwrite") { put("type", "boolean") }
+                    }
+                    putJsonArray("required") { add("source"); add("destination") }
+                }
+            )),
+            category = ToolCategory.MUTATING
+        ),
+
         // === DANGEROUS tools ===
         ToolDeclaration(
             definition = ToolDefinition(function = ToolFunctionDef(
@@ -306,6 +451,22 @@ object ToolRegistry {
                     put("type", "object")
                     putJsonObject("properties") { putJsonObject("code") { put("type", "string") } }
                     putJsonArray("required") { add("code") }
+                }
+            )),
+            category = ToolCategory.DANGEROUS
+        ),
+        ToolDeclaration(
+            definition = ToolDefinition(function = ToolFunctionDef(
+                name = "rm",
+                description = "Delete a file or directory. Supports recursive deletion and dry_run preview.",
+                parameters = paramsObject {
+                    put("type", "object")
+                    putJsonObject("properties") {
+                        putJsonObject("path") { put("type", "string") }
+                        putJsonObject("recursive") { put("type", "boolean") }
+                        putJsonObject("dry_run") { put("type", "boolean") }
+                    }
+                    putJsonArray("required") { add("path") }
                 }
             )),
             category = ToolCategory.DANGEROUS
