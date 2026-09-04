@@ -17,12 +17,20 @@ sealed interface AgentDelta {
     data class StreamingStart(val text: String = "") : AgentDelta
     /** Signals the end of a streaming response, with the full accumulated text. */
     data class StreamingEnd(val fullText: String) : AgentDelta
+    /** State machine transition — emitted whenever the session state changes. */
+    data class StateChange(val from: AgentSessionState, val to: AgentSessionState, val reason: String) : AgentDelta
+    /** Tool approval request — emitted when a tool needs user approval. */
+    data class ToolApprovalRequest(val toolCallId: String, val toolName: String, val toolArgs: String, val category: ToolCategory) : AgentDelta
+    /** Command queue update — emitted when the queue contents change. */
+    data class QueueUpdate(val pendingCommands: Int, val queueContents: List<String>) : AgentDelta
 }
 
 class AgentEngine(
     private val client: ApiClient,
     private val toolExecutor: suspend (name: String, args: JsonObject) -> String,
-    private val onDelta: (AgentDelta) -> Unit
+    private val onDelta: (AgentDelta) -> Unit,
+    private val stateMachine: SessionStateMachine = SessionStateMachine(),
+    private val commandQueue: CommandQueue = CommandQueue()
 ) {
     companion object {
         const val RECENT_WINDOW_MESSAGES = 8
@@ -35,6 +43,21 @@ class AgentEngine(
         "search_replace", "delete_file", "delete_directory",
         "rename_file", "create_directory", "run_command", "run_python", "git_commit"
     )
+
+    /** Expose state machine for external queries (e.g. UI status display). */
+    val state: AgentSessionState get() = stateMachine.state
+    val queue: CommandQueue get() = commandQueue
+
+    init {
+        // Wire state machine transitions to AgentDelta emissions
+        stateMachine.addListener { transition ->
+            onDelta(AgentDelta.StateChange(transition.from, transition.to, transition.reason))
+        }
+        // Wire command queue changes to AgentDelta emissions
+        commandQueue.addListener { snapshot ->
+            onDelta(AgentDelta.QueueUpdate(snapshot.size, snapshot.map { it::class.simpleName ?: "Unknown" }))
+        }
+    }
 
     fun applySemanticSlidingWindow(messages: List<ChatMessage>): List<ChatMessage> {
         val n = messages.size
@@ -52,11 +75,14 @@ class AgentEngine(
     }
 
     /**
-     * Streaming variant of runAgentLoop.
-     * Uses SSE streaming to receive tokens incrementally, emitting AgentDelta.StreamingContent
-     * for each chunk so the UI can render text as it arrives.
+     * Streaming variant of runAgentLoop with state machine + command queue integration.
      *
-     * Phase 9: SSE Streaming Support.
+     * Key improvements over the original:
+     * 1. Explicit state transitions (IDLE -> GENERATING -> EXECUTING_TOOLS -> PAUSED -> COMPLETED)
+     * 2. Command queue for steering, abort, and tool decisions
+     * 3. Abort checking between API calls and tool executions
+     * 4. Tool approval via CompletableDeferred (non-blocking, with deny reasons)
+     * 5. Steering from both the command queue and the legacy steerProvider
      */
     suspend fun runAgentLoopStreaming(
         initialHistory: List<ChatMessage>,
@@ -80,16 +106,48 @@ class AgentEngine(
         messages.add(userMessage)
         newMessages.add(userMessage)
 
+        // Register this coroutine as the active job so Abort can cancel it
+        val thisJob = coroutineContext[Job]
+        if (thisJob != null) commandQueue.setActiveJob(thisJob)
+        commandQueue.resetAbort()
+
+        // Transition: IDLE -> GENERATING (first step)
+        stateMachine.transitionTo(AgentSessionState.GENERATING, "Starting agent loop")
+
         for (step in 0 until maxSteps) {
             ensureActive()
 
-            DebugLog.info("AgentEngine", "Step ${step + 1}/$maxSteps, phase: $currentPhase, message count: ${messages.size}")
+            // --- Abort check (from command queue) ---
+            if (commandQueue.isAborted()) {
+                DebugLog.info("AgentEngine", "Abort detected at step ${step + 1}, stopping loop")
+                stateMachine.transitionTo(AgentSessionState.COMPLETED, "Aborted by user")
+                break
+            }
 
-            // Inject steering messages
+            DebugLog.info("AgentEngine", "Step ${step + 1}/$maxSteps, phase: $currentPhase, state: ${stateMachine.state}, message count: ${messages.size}")
+
+            // --- Process command queue: steering ---
+            // Drain all pending Steer commands from the queue
+            while (true) {
+                val cmd = commandQueue.peek()
+                if (cmd is AgentCommand.Steer) {
+                    commandQueue.dequeue()
+                    DebugLog.info("AgentEngine", "Injecting steer message from command queue: ${cmd.text.take(100)}")
+                    val steerMsg = ChatMessage(MessageRole.USER, "[Steering] ${cmd.text}")
+                    messages.add(steerMsg)
+                    newMessages.add(steerMsg)
+                    // State transition: signal that we're processing a steer
+                    stateMachine.transitionTo(AgentSessionState.GENERATING, "Steering: ${cmd.text.take(50)}")
+                } else {
+                    break
+                }
+            }
+
+            // --- Legacy steering provider (backward compatibility) ---
             val steerText = steerProvider?.invoke()
             if (steerText != null && steerText.isNotBlank()) {
-                DebugLog.info("AgentEngine", "Injecting steer message: ${steerText.take(100)}")
-                val steerMsg = ChatMessage(MessageRole.USER, steerText)
+                DebugLog.info("AgentEngine", "Injecting steer message from provider: ${steerText.take(100)}")
+                val steerMsg = ChatMessage(MessageRole.USER, "[Steering] $steerText")
                 messages.add(steerMsg)
                 newMessages.add(steerMsg)
             }
@@ -119,19 +177,31 @@ class AgentEngine(
             val messagesForApi = compressed + ephemeral
 
             DebugLog.info("AgentEngine", "Sending ${messagesForApi.size} messages to API, ${activeTools.size} tools")
-            messagesForApi.forEachIndexed { idx, msg ->
-                DebugLog.info("AgentEngine", "  Message[$idx] ${msg.role}: ${msg.content?.take(80) ?: "[no content]"}${if (msg.toolCalls != null) " [has tool_calls]" else ""}")
-            }
+
+            // --- State: GENERATING ---
+            stateMachine.transitionTo(AgentSessionState.GENERATING, "Step ${step + 1}: requesting LLM response")
 
             // Use non-streaming mode (more reliable)
             DebugLog.info("AgentEngine", "Sending non-streaming request to API")
-            val assistantResponse = client.chat(
-                messages = messagesForApi,
-                tools = activeTools
-            )
+            val assistantResponse = try {
+                client.chat(
+                    messages = messagesForApi,
+                    tools = activeTools
+                )
+            } catch (e: CancellationException) {
+                DebugLog.info("AgentEngine", "API call cancelled (likely abort)")
+                stateMachine.transitionTo(AgentSessionState.COMPLETED, "Cancelled")
+                throw e
+            }
             DebugLog.info("AgentEngine", "Non-streaming response received: ${assistantResponse.content?.take(100) ?: "[no content]"}")
-            onDelta(AgentDelta.Assistant(assistantResponse.content ?: ""))
             newMessages.add(assistantResponse)
+
+            // --- Abort check after API response ---
+            if (commandQueue.isAborted()) {
+                DebugLog.info("AgentEngine", "Abort detected after API response, stopping")
+                stateMachine.transitionTo(AgentSessionState.COMPLETED, "Aborted by user")
+                break
+            }
 
             // Extract plan from content
             assistantResponse.content?.let { content ->
@@ -149,8 +219,19 @@ class AgentEngine(
                 }
                 messages.add(assistantResponse)
 
+                // --- State: EXECUTING_TOOLS ---
+                stateMachine.transitionTo(AgentSessionState.EXECUTING_TOOLS, "Executing ${calls.size} tool call(s)")
+
                 for (call in calls) {
                     ensureActive()
+
+                    // --- Abort check before each tool ---
+                    if (commandQueue.isAborted()) {
+                        DebugLog.info("AgentEngine", "Abort detected before tool $call, stopping")
+                        stateMachine.transitionTo(AgentSessionState.COMPLETED, "Aborted by user")
+                        break
+                    }
+
                     val funcName = call.function.name
                     val rawArgs = call.function.arguments
 
@@ -174,6 +255,56 @@ class AgentEngine(
                         continue
                     }
 
+                    // --- Tool approval via command queue ---
+                    val category = getToolCategoryForApproval(funcName)
+                    if (category != ToolCategory.READ_ONLY) {
+                        // Emit approval request to UI
+                        onDelta(AgentDelta.ToolApprovalRequest(call.id, funcName, parsedArgs.toString(), category))
+
+                        // Pause state machine while waiting for approval
+                        stateMachine.pause("Tool approval required: $funcName (category: $category)")
+
+                        // Create a deferred and wait for user decision
+                        val deferred = commandQueue.createToolDecisionPending()
+                        val decision = try {
+                            deferred.await()
+                        } catch (e: CancellationException) {
+                            DebugLog.info("AgentEngine", "Tool approval cancelled (likely abort)")
+                            commandQueue.clearToolDecisionPending()
+                            stateMachine.transitionTo(AgentSessionState.COMPLETED, "Cancelled during tool approval")
+                            throw e
+                        }
+
+                        commandQueue.clearToolDecisionPending()
+
+                        // Resume state machine
+                        stateMachine.resume("User decision: ${if (decision.acceptedToolCallIds.contains(call.id)) "approved" else "denied"}")
+
+                        // Check if this specific tool call was denied
+                        if (!decision.acceptedToolCallIds.contains(call.id)) {
+                            val denyReason = decision.deniedToolCallIds[call.id] ?: "No reason provided"
+                            DebugLog.info("AgentEngine", "Tool $funcName denied by user: $denyReason")
+                            val denyResult = "Tool call denied by user. Reason: $denyReason"
+                            onDelta(AgentDelta.ToolOutput(funcName, denyResult))
+                            val toolMsg = ChatMessage(MessageRole.TOOL, content = denyResult, toolCallId = call.id)
+                            messages.add(toolMsg)
+                            newMessages.add(toolMsg)
+                            continue
+                        }
+
+                        // If auto-approve session is requested, apply it via the tool executor
+                        if (decision.autoApproveSession) {
+                            DebugLog.info("AgentEngine", "Auto-approve session requested for future $funcName calls")
+                        }
+                    }
+
+                    // --- Abort check after approval, before execution ---
+                    if (commandQueue.isAborted()) {
+                        DebugLog.info("AgentEngine", "Abort detected after approval, stopping")
+                        stateMachine.transitionTo(AgentSessionState.COMPLETED, "Aborted by user")
+                        break
+                    }
+
                     DebugLog.info("AgentEngine", "Calling tool: $funcName with args: ${parsedArgs.toString().take(100)}")
                     val toolResult = try {
                         toolExecutor(funcName, parsedArgs)
@@ -188,12 +319,18 @@ class AgentEngine(
                     messages.add(toolMsg)
                     newMessages.add(toolMsg)
                 }
+
+                // After all tools, go back to GENERATING for next step
+                if (stateMachine.state == AgentSessionState.EXECUTING_TOOLS) {
+                    stateMachine.transitionTo(AgentSessionState.GENERATING, "Tools completed, continuing loop")
+                }
                 continue
             }
 
             if (!assistantResponse.content.isNullOrBlank()) {
                 messages.add(assistantResponse)
-                // Content was already streamed; no need to emit Assistant delta again
+                onDelta(AgentDelta.Assistant(assistantResponse.content))
+                stateMachine.transitionTo(AgentSessionState.COMPLETED, "Assistant provided final response")
                 break
             } else {
                 emptyRetries++
@@ -202,11 +339,19 @@ class AgentEngine(
                     messages.add(nudge)
                     newMessages.add(nudge)
                     onDelta(AgentDelta.Status("[empty response — retrying $emptyRetries/3]"))
+                    stateMachine.transitionTo(AgentSessionState.GENERATING, "Empty response retry $emptyRetries/3")
                     continue
                 }
+                stateMachine.transitionTo(AgentSessionState.COMPLETED, "Max empty retries reached")
                 break
             }
         }
+
+        // Final state cleanup
+        if (stateMachine.state != AgentSessionState.COMPLETED && stateMachine.state != AgentSessionState.ERROR) {
+            stateMachine.transitionTo(AgentSessionState.COMPLETED, "Loop ended (max steps or break)")
+        }
+        commandQueue.clearActiveJob()
         newMessages
     }
 
@@ -232,20 +377,48 @@ class AgentEngine(
         messages.add(userMessage)
         newMessages.add(userMessage)
 
-        val currentMaxSteps = maxSteps
+        // Register this coroutine as the active job so Abort can cancel it
+        val thisJob = coroutineContext[Job]
+        if (thisJob != null) commandQueue.setActiveJob(thisJob)
+        commandQueue.resetAbort()
 
-        for (step in 0 until currentMaxSteps) {
+        // Transition: IDLE -> GENERATING (first step)
+        stateMachine.transitionTo(AgentSessionState.GENERATING, "Starting agent loop")
+
+        for (step in 0 until maxSteps) {
             ensureActive()
 
-            // Inject steering messages from the user if any are pending
+            // --- Abort check (from command queue) ---
+            if (commandQueue.isAborted()) {
+                DebugLog.info("AgentEngine", "Abort detected at step ${step + 1}, stopping loop")
+                stateMachine.transitionTo(AgentSessionState.COMPLETED, "Aborted by user")
+                break
+            }
+
+            // --- Process command queue: steering ---
+            while (true) {
+                val cmd = commandQueue.peek()
+                if (cmd is AgentCommand.Steer) {
+                    commandQueue.dequeue()
+                    DebugLog.info("AgentEngine", "Injecting steer message from command queue: ${cmd.text.take(100)}")
+                    val steerMsg = ChatMessage(MessageRole.USER, "[Steering] ${cmd.text}")
+                    messages.add(steerMsg)
+                    newMessages.add(steerMsg)
+                    stateMachine.transitionTo(AgentSessionState.GENERATING, "Steering: ${cmd.text.take(50)}")
+                } else {
+                    break
+                }
+            }
+
+            // --- Legacy steering provider (backward compatibility) ---
             val steerText = steerProvider?.invoke()
             if (steerText != null && steerText.isNotBlank()) {
-                val steerMsg = ChatMessage(MessageRole.USER, steerText)
+                val steerMsg = ChatMessage(MessageRole.USER, "[Steering] $steerText")
                 messages.add(steerMsg)
                 newMessages.add(steerMsg)
             }
 
-            onDelta(AgentDelta.Status("[step ${step + 1}/$currentMaxSteps]"))
+            onDelta(AgentDelta.Status("[step ${step + 1}/$maxSteps]"))
 
             val activeTools = if (currentPhase == "execution") {
                 availableTools
@@ -266,8 +439,22 @@ class AgentEngine(
             val compressed = applySemanticSlidingWindow(messages)
             val messagesForApi = compressed + ephemeral
 
-            val assistantResponse = client.chat(messagesForApi, activeTools)
+            // --- State: GENERATING ---
+            stateMachine.transitionTo(AgentSessionState.GENERATING, "Step ${step + 1}: requesting LLM response")
+
+            val assistantResponse = try {
+                client.chat(messagesForApi, activeTools)
+            } catch (e: CancellationException) {
+                stateMachine.transitionTo(AgentSessionState.COMPLETED, "Cancelled")
+                throw e
+            }
             newMessages.add(assistantResponse)
+
+            // --- Abort check after API response ---
+            if (commandQueue.isAborted()) {
+                stateMachine.transitionTo(AgentSessionState.COMPLETED, "Aborted by user")
+                break
+            }
 
             assistantResponse.content?.let { content ->
                 val planMatch = Regex("<plan>([\\s\\S]*?)</plan>", RegexOption.IGNORE_CASE).find(content)
@@ -284,8 +471,18 @@ class AgentEngine(
                 }
                 messages.add(assistantResponse)
 
+                // --- State: EXECUTING_TOOLS ---
+                stateMachine.transitionTo(AgentSessionState.EXECUTING_TOOLS, "Executing ${calls.size} tool call(s)")
+
                 for (call in calls) {
                     ensureActive()
+
+                    // --- Abort check before each tool ---
+                    if (commandQueue.isAborted()) {
+                        stateMachine.transitionTo(AgentSessionState.COMPLETED, "Aborted by user")
+                        break
+                    }
+
                     val funcName = call.function.name
                     val rawArgs = call.function.arguments
 
@@ -309,6 +506,42 @@ class AgentEngine(
                         continue
                     }
 
+                    // --- Tool approval via command queue ---
+                    val category = getToolCategoryForApproval(funcName)
+                    if (category != ToolCategory.READ_ONLY) {
+                        onDelta(AgentDelta.ToolApprovalRequest(call.id, funcName, parsedArgs.toString(), category))
+                        stateMachine.pause("Tool approval required: $funcName (category: $category)")
+
+                        val deferred = commandQueue.createToolDecisionPending()
+                        val decision = try {
+                            deferred.await()
+                        } catch (e: CancellationException) {
+                            commandQueue.clearToolDecisionPending()
+                            stateMachine.transitionTo(AgentSessionState.COMPLETED, "Cancelled during tool approval")
+                            throw e
+                        }
+
+                        commandQueue.clearToolDecisionPending()
+                        stateMachine.resume("User decision received")
+
+                        if (!decision.acceptedToolCallIds.contains(call.id)) {
+                            val denyReason = decision.deniedToolCallIds[call.id] ?: "No reason provided"
+                            DebugLog.info("AgentEngine", "Tool $funcName denied by user: $denyReason")
+                            val denyResult = "Tool call denied by user. Reason: $denyReason"
+                            onDelta(AgentDelta.ToolOutput(funcName, denyResult))
+                            val toolMsg = ChatMessage(MessageRole.TOOL, content = denyResult, toolCallId = call.id)
+                            messages.add(toolMsg)
+                            newMessages.add(toolMsg)
+                            continue
+                        }
+                    }
+
+                    // --- Abort check after approval ---
+                    if (commandQueue.isAborted()) {
+                        stateMachine.transitionTo(AgentSessionState.COMPLETED, "Aborted by user")
+                        break
+                    }
+
                     DebugLog.info("AgentEngine", "Calling tool: $funcName with args: ${parsedArgs.toString().take(100)}")
                     val toolResult = try {
                         toolExecutor(funcName, parsedArgs)
@@ -323,12 +556,17 @@ class AgentEngine(
                     messages.add(toolMsg)
                     newMessages.add(toolMsg)
                 }
+
+                if (stateMachine.state == AgentSessionState.EXECUTING_TOOLS) {
+                    stateMachine.transitionTo(AgentSessionState.GENERATING, "Tools completed, continuing loop")
+                }
                 continue
             }
 
             if (!assistantResponse.content.isNullOrBlank()) {
                 messages.add(assistantResponse)
                 onDelta(AgentDelta.Assistant(assistantResponse.content))
+                stateMachine.transitionTo(AgentSessionState.COMPLETED, "Assistant provided final response")
                 break
             } else {
                 emptyRetries++
@@ -337,12 +575,39 @@ class AgentEngine(
                     messages.add(nudge)
                     newMessages.add(nudge)
                     onDelta(AgentDelta.Status("[empty response — retrying $emptyRetries/3]"))
+                    stateMachine.transitionTo(AgentSessionState.GENERATING, "Empty response retry $emptyRetries/3")
                     continue
                 }
+                stateMachine.transitionTo(AgentSessionState.COMPLETED, "Max empty retries reached")
                 break
             }
         }
+
+        if (stateMachine.state != AgentSessionState.COMPLETED && stateMachine.state != AgentSessionState.ERROR) {
+            stateMachine.transitionTo(AgentSessionState.COMPLETED, "Loop ended (max steps or break)")
+        }
+        commandQueue.clearActiveJob()
         newMessages
+    }
+
+    /**
+     * Get the tool category for approval routing.
+     * Mirrors the categorization in PlatformToolHandler but kept here for the engine's own logic.
+     */
+    private fun getToolCategoryForApproval(toolName: String): ToolCategory {
+        val readOnlyTools = setOf(
+            "read_file", "read_file_lines", "list_directory", "find_files",
+            "search_in_files", "get_active_editor", "fetch_url", "web_search",
+            "git_status", "git_diff", "git_log", "format_document",
+            "update_todo_list", "request_phase_change"
+        )
+        val dangerousTools = setOf("run_command", "run_python")
+
+        return when (toolName) {
+            in readOnlyTools -> ToolCategory.READ_ONLY
+            in dangerousTools -> ToolCategory.DANGEROUS
+            else -> ToolCategory.MUTATING
+        }
     }
 
     private fun buildSystemPrompt(toolNames: List<String>, memory: String, globalMem: String, phase: String): String {
@@ -350,6 +615,7 @@ class AgentEngine(
                 "Available tools: ${toolNames.joinToString(", ")}.\n" +
                 "Current phase: '$phase'. In 'discovery', you only have read-only tools to explore the codebase. " +
                 "Once you understand the task, use 'request_phase_change' with target_phase='execution' to unlock mutation tools.\n" +
+                "If a tool call is denied by the user, respect the denial reason and adjust your approach accordingly.\n" +
                 (if (globalMem.isNotBlank()) "\n<agent_global_memory>\n$globalMem\n</agent_global_memory>" else "") +
                 (if (memory.isNotBlank()) "\n<agent_memory>\n$memory\n</agent_memory>" else "")
     }

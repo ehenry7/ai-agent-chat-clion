@@ -11,6 +11,20 @@ enum class MessageRole {
     @SerialName("tool") TOOL
 }
 
+/**
+ * Tool category for approval routing.
+ * Inspired by refact-main's tool dependency/category declarations.
+ *
+ *  READ_ONLY   - No approval needed (read_file, list_directory, search, etc.)
+ *  MUTATING    - Requires approval (write_file, edit_file, apply_patch, etc.)
+ *  DANGEROUS   - Always requires approval, no auto-approve (run_command with destructive ops)
+ */
+enum class ToolCategory {
+    READ_ONLY,
+    MUTATING,
+    DANGEROUS
+}
+
 @Serializable
 data class FunctionCall(
     val name: String,

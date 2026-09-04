@@ -1,5 +1,6 @@
 package com.aiagent.chat.tools
 
+import com.aiagent.chat.model.ToolCategory
 import com.aiagent.chat.model.ToolDefinition
 import com.aiagent.chat.model.ToolFunctionDef
 import com.intellij.execution.configurations.GeneralCommandLine
@@ -38,12 +39,50 @@ class PlatformToolHandler(
     /**
      * Interface for non-blocking tool approval.
      * The UI implements this to show inline approval panels.
+     * Now supports deny reasons (inspired by refact-main's ToolDecision).
      */
     interface ApprovalHandler {
-        fun requestApproval(toolName: String, toolArgs: String): ApprovalResult
+        fun requestApproval(toolName: String, toolArgs: String, category: ToolCategory): ApprovalResult
     }
 
-    data class ApprovalResult(val approved: Boolean, val autoApproveSession: Boolean)
+    data class ApprovalResult(
+        val approved: Boolean,
+        val autoApproveSession: Boolean = false,
+        val denyReason: String? = null
+    )
+
+    /**
+     * Tool category mapping for approval routing.
+     * Inspired by refact-main's per-tool PauseReason rules.
+     */
+    private val toolCategories: Map<String, ToolCategory> = mapOf(
+        "read_file" to ToolCategory.READ_ONLY,
+        "read_file_lines" to ToolCategory.READ_ONLY,
+        "list_directory" to ToolCategory.READ_ONLY,
+        "find_files" to ToolCategory.READ_ONLY,
+        "search_in_files" to ToolCategory.READ_ONLY,
+        "get_active_editor" to ToolCategory.READ_ONLY,
+        "fetch_url" to ToolCategory.READ_ONLY,
+        "web_search" to ToolCategory.READ_ONLY,
+        "git_status" to ToolCategory.READ_ONLY,
+        "git_diff" to ToolCategory.READ_ONLY,
+        "git_log" to ToolCategory.READ_ONLY,
+        "format_document" to ToolCategory.READ_ONLY,
+        "update_todo_list" to ToolCategory.READ_ONLY,
+        "request_phase_change" to ToolCategory.READ_ONLY,
+        "write_file" to ToolCategory.MUTATING,
+        "edit_file" to ToolCategory.MUTATING,
+        "apply_diff" to ToolCategory.MUTATING,
+        "apply_patch" to ToolCategory.MUTATING,
+        "update_memory" to ToolCategory.MUTATING,
+        "git_commit" to ToolCategory.MUTATING,
+        "run_command" to ToolCategory.DANGEROUS,
+        "run_python" to ToolCategory.DANGEROUS
+    )
+
+    fun getToolCategory(name: String): ToolCategory {
+        return toolCategories[name] ?: ToolCategory.MUTATING
+    }
 
     private val autoApprovedTools = mutableSetOf<String>()
 
@@ -268,12 +307,19 @@ class PlatformToolHandler(
     }
 
     fun execute(name: String, args: JsonObject): String {
-        val mutatingTools = setOf("write_file", "edit_file", "run_command", "run_python", "apply_patch", "apply_diff", "git_commit")
-        if (mutatingTools.contains(name) && !autoApprovedTools.contains(name)) {
+        val category = getToolCategory(name)
+        val requiresApproval = category != ToolCategory.READ_ONLY && !autoApprovedTools.contains(name)
+
+        if (requiresApproval) {
             if (approvalHandler != null) {
-                val result = approvalHandler.requestApproval(name, args.toString())
-                if (!result.approved) return "Execution rejected by user."
-                if (result.autoApproveSession) {
+                val result = approvalHandler.requestApproval(name, args.toString(), category)
+                if (!result.approved) {
+                    // Return deny reason to the LLM so it can adjust its approach
+                    val reason = result.denyReason ?: "No reason provided"
+                    return "Tool call denied by user. Reason: $reason"
+                }
+                // DANGEROUS tools never get auto-approve session
+                if (result.autoApproveSession && category != ToolCategory.DANGEROUS) {
                     autoApprovedTools.add(name)
                 }
             } else {
@@ -282,13 +328,13 @@ class PlatformToolHandler(
                 ApplicationManager.getApplication().invokeAndWait {
                     val res = Messages.showYesNoDialog(
                         project,
-                        "Agent wants to execute $name.\nArgs: $args\n\nAllow this operation?",
+                        "Agent wants to execute $name (category: $category).\nArgs: $args\n\nAllow this operation?",
                         "Tool Execution Request",
                         Messages.getQuestionIcon()
                     )
                     approved = (res == Messages.YES)
                 }
-                if (!approved) return "Execution rejected by user."
+                if (!approved) return "Tool call denied by user. Reason: User rejected in dialog."
             }
         }
 
