@@ -2,6 +2,7 @@ package com.aiagent.chat.agent
 
 import com.aiagent.chat.debug.DebugLog
 import com.aiagent.chat.model.*
+import com.aiagent.chat.model.ApprovalMode
 import com.aiagent.chat.net.ApiClient
 import com.aiagent.chat.net.ContextLimitException
 import com.aiagent.chat.net.StreamChunk
@@ -39,7 +40,8 @@ class AgentEngine(
     private val onDelta: (AgentDelta) -> Unit,
     private val stateMachine: SessionStateMachine = SessionStateMachine(),
     private val commandQueue: CommandQueue = CommandQueue(),
-    private val contextCompactor: ContextCompactor? = null
+    private val contextCompactor: ContextCompactor? = null,
+    private val approvalMode: ApprovalMode = ApprovalMode.BALANCED
 ) {
     companion object {
         const val RECENT_WINDOW_MESSAGES = 8
@@ -260,7 +262,7 @@ class AgentEngine(
 
                     // --- Tool approval via command queue ---
                     val category = getToolCategoryForApproval(funcName)
-                    if (category != ToolCategory.READ_ONLY) {
+                    if (approvalMode.requiresApproval(category)) {
                         // Emit approval request to UI
                         onDelta(AgentDelta.ToolApprovalRequest(call.id, funcName, parsedArgs.toString(), category))
 
@@ -516,7 +518,7 @@ class AgentEngine(
 
                     // --- Tool approval via command queue ---
                     val category = getToolCategoryForApproval(funcName)
-                    if (category != ToolCategory.READ_ONLY) {
+                    if (approvalMode.requiresApproval(category)) {
                         onDelta(AgentDelta.ToolApprovalRequest(call.id, funcName, parsedArgs.toString(), category))
                         stateMachine.pause("Tool approval required: $funcName (category: $category)")
 

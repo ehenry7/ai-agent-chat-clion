@@ -14,6 +14,7 @@ import com.aiagent.chat.model.MessageRole
 import com.aiagent.chat.model.SessionState
 import com.aiagent.chat.model.TodoItem
 import com.aiagent.chat.model.ToolCategory
+import com.aiagent.chat.model.ApprovalMode
 import com.aiagent.chat.model.Usage
 import com.aiagent.chat.model.UiLogEntry
 import com.aiagent.chat.net.ApiClient
@@ -98,6 +99,9 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
     private var activeConversationId: String? = null
     private var currentPhase = "execution"
 
+    // --- Approval mode (strict/balanced/permissive/autopilot) ---
+    private var approvalMode: ApprovalMode = ApprovalMode.BALANCED
+
     // --- State machine + command queue (agent-improvements) ---
     private val stateMachine = SessionStateMachine()
     private val commandQueue = CommandQueue()
@@ -180,6 +184,13 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
 
     init {
         conversationTabPanel.newConversation("Session 1")
+
+        // Restore approval mode from saved settings
+        approvalMode = try {
+            ApprovalMode.valueOf(settings.state.approvalMode)
+        } catch (_: Exception) {
+            ApprovalMode.BALANCED
+        }
 
         conversationTabPanel.onTabChanged = { _ -> }
 
@@ -333,6 +344,26 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
             cardLayout.show(this, SETUP_CARD)
         }
         popup.add(settingsItem)
+
+        popup.addSeparator()
+
+        // --- Approval mode submenu ---
+        val approvalMenu = JMenu("Approval Mode").apply {
+            icon = AllIcons.General.Settings
+        }
+        for (mode in ApprovalMode.entries) {
+            val item = JCheckBoxMenuItem("${mode.displayName} - ${mode.description}").apply {
+                isSelected = mode == approvalMode
+                addActionListener {
+                    approvalMode = mode
+                    settings.state.approvalMode = mode.name
+                    DebugLog.info("ChatToolWindow", "Approval mode changed to: ${mode.name}")
+                    statusLabel.text = "Approval: ${mode.displayName}"
+                }
+            }
+            approvalMenu.add(item)
+        }
+        popup.add(approvalMenu)
 
         popup.addSeparator()
 
@@ -725,7 +756,8 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                     }
                 },
                 stateMachine = stateMachine,
-                commandQueue = commandQueue
+                commandQueue = commandQueue,
+                approvalMode = approvalMode
             )
 
             try {

@@ -25,6 +25,47 @@ enum class ToolCategory {
     DANGEROUS
 }
 
+/**
+ * Approval mode controlling which tool categories require user approval.
+ *
+ *  STRICT     - All tools require approval (including READ_ONLY)
+ *  BALANCED   - MUTATING and DANGEROUS require approval; READ_ONLY auto-approved (default)
+ *  PERMISSIVE - Only DANGEROUS require approval; READ_ONLY and MUTATING auto-approved
+ *  AUTOPILOT  - No approval required; all tools execute automatically
+ */
+enum class ApprovalMode {
+    STRICT,
+    BALANCED,
+    PERMISSIVE,
+    AUTOPILOT;
+
+    /**
+     * Returns true if the given tool category requires user approval under this mode.
+     */
+    fun requiresApproval(category: ToolCategory): Boolean {
+        return when (this) {
+            STRICT     -> true
+            BALANCED   -> category != ToolCategory.READ_ONLY
+            PERMISSIVE -> category == ToolCategory.DANGEROUS
+            AUTOPILOT  -> false
+        }
+    }
+
+    val displayName: String get() = when (this) {
+        STRICT     -> "Strict"
+        BALANCED   -> "Balanced"
+        PERMISSIVE -> "Permissive"
+        AUTOPILOT  -> "Autopilot"
+    }
+
+    val description: String get() = when (this) {
+        STRICT     -> "Approve every tool call (including reads)"
+        BALANCED   -> "Approve writes and commands; reads auto-approved"
+        PERMISSIVE -> "Approve only dangerous commands; writes auto-approved"
+        AUTOPILOT  -> "No approval needed; all tools run automatically"
+    }
+}
+
 @Serializable
 data class FunctionCall(
     val name: String,

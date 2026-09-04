@@ -1,5 +1,6 @@
 package com.aiagent.chat.services
 
+import com.aiagent.chat.model.ApprovalMode
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.*
 
@@ -15,6 +16,7 @@ class ChatStateService : PersistentStateComponent<ChatStateService.State> {
         var model: String = "GLM-5.2-1"
         var maxSteps: Int = 25
         var apiKey: String = ""
+        var approvalMode: String = ApprovalMode.BALANCED.name
     }
 
     private var myState = State()
