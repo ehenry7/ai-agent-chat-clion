@@ -27,6 +27,10 @@ class ResponseMessagePanel(
     private val thinkingText: String = ""
 ) : BaseMessagePanel("Assistant", "assistant") {
 
+    /** Collapsible tool calls section embedded in this assistant bubble. */
+    private var toolCallsSection: ToolCallsSection? = null
+    private var bodyWrapper: JPanel? = null
+
     override fun getRoleIcon(): Icon = AllIcons.General.Balloon
 
     override fun getBubbleBackground(): JBColor = JBColor(0xFAFAFA, 0x232527)
@@ -35,11 +39,39 @@ class ResponseMessagePanel(
         buildBody()
     }
 
+    /**
+     * Add a tool call result to this assistant bubble's tool calls section.
+     * The section auto-expands while tools are running.
+     */
+    fun addToolCall(name: String, output: String, status: ToolCallCard.ToolStatus, autoExpand: Boolean = true) {
+        SwingUtilities.invokeLater {
+            if (toolCallsSection == null) {
+                toolCallsSection = ToolCallsSection()
+                toolCallsSection!!.alignmentX = JPanel.LEFT_ALIGNMENT
+                bodyWrapper?.add(toolCallsSection)
+            }
+            toolCallsSection!!.addToolCall(name, output, status, autoExpand = autoExpand)
+            bodyWrapper?.revalidate()
+            bodyWrapper?.repaint()
+        }
+    }
+
+    /**
+     * Collapse the tool calls section to a single "Tool Calls (N)" line.
+     * Call when all tools are done and the final assistant response is displayed.
+     */
+    fun collapseToolCalls() {
+        SwingUtilities.invokeLater {
+            toolCallsSection?.collapse()
+        }
+    }
+
     override fun buildBody() {
         try {
             val wrapper = JPanel()
             wrapper.isOpaque = false
             wrapper.layout = BoxLayout(wrapper, BoxLayout.Y_AXIS)
+            bodyWrapper = wrapper
 
             // Thinking/reasoning section (muted, smaller font, distinct color)
             if (thinkingText.isNotBlank()) {

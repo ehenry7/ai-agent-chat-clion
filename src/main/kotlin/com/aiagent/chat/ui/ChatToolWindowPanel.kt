@@ -133,6 +133,8 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
     private val pendingSteerMessages = java.util.concurrent.ConcurrentLinkedQueue<String>()
 
     private var activeStreamingPanel: StreamingResponsePanel? = null
+    /** Tracks the most recent ResponseMessagePanel so tool calls can be embedded in it. */
+    private var activeAssistantPanel: ResponseMessagePanel? = null
 
     private val toolHandler = PlatformToolHandler(
         project = project,
@@ -649,16 +651,34 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                 role.startsWith("tool") -> {
                     val toolName = role.removePrefix("tool:").trim()
                     val status = if (text.startsWith("Error")) ToolCallCard.ToolStatus.ERROR else ToolCallCard.ToolStatus.COMPLETED
-                    ToolCallCard(toolName, text, status)
+                    // Route tool call into the active assistant panel's collapsible section
+                    val assistantPanel = activeAssistantPanel
+                    if (assistantPanel != null) {
+                        assistantPanel.addToolCall(toolName, text, status)
+                        // Tool call was added inside the assistant bubble — no new top-level component
+                        return@invokeLater
+                    } else {
+                        // Fallback: no active assistant panel, create standalone card
+                        ToolCallCard(toolName, text, status)
+                    }
                 }
                 role.contains("user") -> {
+                    // New user message: collapse any pending tool calls in the previous assistant bubble
+                    activeAssistantPanel?.collapseToolCalls()
+                    activeAssistantPanel = null
                     UserMessagePanel(text, referencedFiles)
                 }
                 role == "error" -> {
+                    activeAssistantPanel?.collapseToolCalls()
+                    activeAssistantPanel = null
                     createErrorPanel(text)
                 }
                 else -> {
-                    ResponseMessagePanel(text, project)
+                    // New assistant message: collapse tool calls from the previous assistant turn
+                    activeAssistantPanel?.collapseToolCalls()
+                    val panel = ResponseMessagePanel(text, project)
+                    activeAssistantPanel = panel
+                    panel
                 }
             }
 
@@ -777,6 +797,9 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
             panel.finalize()
             activeStreamingPanel = null
         }
+        // Collapse tool calls in the last assistant bubble when stopped
+        activeAssistantPanel?.collapseToolCalls()
+        activeAssistantPanel = null
         activeConversationId = null
         stateMachine.reset()
         usageTracker.reset()
@@ -988,8 +1011,13 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                         }
                         is AgentDelta.ToolOutput -> {
                             activeStreamingPanel?.let { panel ->
-                                panel.finalize()
+                                val finalized = panel.finalize()
                                 activeStreamingPanel = null
+                                // The finalized panel is the new active assistant panel
+                                if (finalized != null) {
+                                    activeAssistantPanel?.collapseToolCalls()
+                                    activeAssistantPanel = finalized
+                                }
                             }
                             addMessageBubbleToActiveTab("tool: ${delta.name}", delta.text)
                         }
@@ -1003,8 +1031,12 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                         is AgentDelta.StreamingEnd -> {
                             if (delta.fullText.isNotBlank()) {
                                 activeStreamingPanel?.let { panel ->
-                                    panel.finalize()
+                                    val finalized = panel.finalize()
                                     activeStreamingPanel = null
+                                    if (finalized != null) {
+                                        activeAssistantPanel?.collapseToolCalls()
+                                        activeAssistantPanel = finalized
+                                    }
                                 }
                             } else {
                                 activeStreamingPanel?.let { panel ->
@@ -1106,6 +1138,9 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                     panel.finalize()
                     activeStreamingPanel = null
                 }
+                // Collapse tool calls in the last assistant bubble when the loop ends
+                activeAssistantPanel?.collapseToolCalls()
+                activeAssistantPanel = null
                 activeConversationId = null
                 stateMachine.reset()
                 commandQueue.clear()
