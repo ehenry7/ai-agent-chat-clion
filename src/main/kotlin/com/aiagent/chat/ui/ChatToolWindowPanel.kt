@@ -32,7 +32,6 @@ import com.intellij.openapi.wm.ToolWindowFactory
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.*
 import com.intellij.ui.content.ContentFactory
-import com.intellij.ui.dsl.builder.*
 import com.intellij.util.ui.JBUI
 import kotlinx.coroutines.*
 import java.awt.BorderLayout
@@ -87,20 +86,33 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
 
     private val statusLabel = JBLabel("Ready")
 
-    private val baseUrlField = JBTextField()
-    private val modelField = JBTextField()
-    private val apiKeyField = JPasswordField()
-
-    // --- Agent parameters ---
-    private val maxStepsField = JBTextField()
-    private val maxContextTokensField = JBTextField()
-    private val maxOutputTokensField = JBTextField()
-
-    // --- Multi-provider fields ---
-    private val multiProviderCheckBox = JBCheckBox("Enable multi-provider mode")
-    private val dynamicRoutingCheckBox = JBCheckBox("Enable dynamic model routing")
-    private val providerListModel = javax.swing.DefaultListModel<String>()
-    private val providerList = JBList(providerListModel)
+    // --- Provider-only setup panel (replaces old standalone fields) ---
+    private val providerSetupPanel = ProviderSetupPanel(
+        settings = settings,
+        onSave = {
+            // After saving, update usage tracker with active model's token settings
+            val activeModel = settings.getProviders()
+                .flatMap { it.models }
+                .find { it.id == settings.state.model }
+            if (activeModel != null) {
+                usageTracker.updateMaxContextTokens(activeModel.maxContextTokens.coerceAtLeast(1024))
+                usageCounterPanel.updateMaxContextTokens(activeModel.maxContextTokens.coerceAtLeast(1024))
+            }
+            showLandingScreen()
+            scope.launch {
+                try {
+                    val client = ApiClient(
+                        baseUrl = settings.state.baseUrl,
+                        apiKey = settings.getApiKey() ?: "",
+                        model = settings.state.model
+                    )
+                    val models = client.listModels()
+                    enhancedInputPanel.updateModelList(models)
+                } catch (_: Exception) { }
+            }
+        },
+        onCancel = { showLandingScreen() }
+    )
 
     private var activeEngineJob: Job? = null
     private var activeConversationId: String? = null
@@ -244,6 +256,26 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
             }
         }
 
+        // When the last tab is closed, show the landing/welcome screen
+        conversationTabPanel.onLastTabClosed = {
+            showLandingScreen()
+        }
+
+        // Wire up model sync callback for the provider setup panel
+        providerSetupPanel.onSyncModels = { provider ->
+            scope.launch {
+                try {
+                    val synced = providerManager.syncModels(provider)
+                    settings.addProvider(synced)
+                    SwingUtilities.invokeLater {
+                        providerSetupPanel.onModelsSynced(synced)
+                    }
+                } catch (e: Exception) {
+                    DebugLog.warn("ChatToolWindow", "Model sync failed for '${provider.name}': ${e.message}")
+                }
+            }
+        }
+
         val chatPanel = JPanel(BorderLayout())
         chatPanel.background = JBColor.PanelBackground
 
@@ -254,10 +286,12 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
         val bottomPanel = buildBottomPanel()
         chatPanel.add(bottomPanel, BorderLayout.SOUTH)
 
-        val setupPanel = buildSetupPanel()
-
         val landingPanel = LandingPanel(
             onQuickAction = { action ->
+                // Ensure there's at least one conversation tab
+                if (conversationTabPanel.getAllConversations().isEmpty()) {
+                    conversationTabPanel.newConversation("Session 1")
+                }
                 enhancedInputPanel.setText(when (action) {
                     "Explain Code" -> "Please explain the code in the currently open file."
                     "Write Tests" -> "Please write unit tests for the currently open file."
@@ -270,20 +304,48 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                 enhancedInputPanel.requestFocus()
             },
             onConfigure = {
-                syncSetupFieldsFromSettings()
                 cardLayout.show(this, SETUP_CARD)
+            },
+            onNewSession = {
+                // Ensure there's at least one conversation tab
+                if (conversationTabPanel.getAllConversations().isEmpty()) {
+                    conversationTabPanel.newConversation("Session 1")
+                }
+                cardLayout.show(this, CHAT_CARD)
+                enhancedInputPanel.requestFocus()
+            },
+            onSessionSelected = { meta ->
+                // Restore the selected session into a new tab
+                val savedState = persistence.loadSessionById(meta.id)
+                if (savedState != null) {
+                    val tabId = conversationTabPanel.newConversation(meta.name)
+                    val conv = conversationTabPanel.getConversation(tabId)
+                    if (conv != null) {
+                        conv.history.addAll(savedState.history)
+                        savedState.uiLog.forEach {
+                            addMessageBubbleToActiveTab(it.role, it.text, recordUiLog = false)
+                        }
+                    }
+                    if (savedState.todoList.isNotEmpty()) {
+                        todoList = savedState.todoList
+                        todoListPanel.updateItems(todoList)
+                    }
+                }
+                cardLayout.show(this, CHAT_CARD)
+                enhancedInputPanel.requestFocus()
             }
         )
 
         add(chatPanel, CHAT_CARD)
-        add(setupPanel, SETUP_CARD)
+        add(providerSetupPanel, SETUP_CARD)
         add(landingPanel, LANDING_CARD)
 
-        if (!settings.isApiKeySet()) {
+        // --- Startup logic ---
+        if (!settings.isApiKeySet() && settings.getProviders().isEmpty()) {
+            // No providers configured — show setup
             cardLayout.show(this, SETUP_CARD)
         } else {
             // --- Session restore on restart ---
-            // Try to restore multiple saved sessions from the sessions index
             val sessionsIndex = persistence.loadSessionsIndex()
             if (sessionsIndex.isNotEmpty()) {
                 // Restore each saved session as a tab
@@ -316,8 +378,8 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                     }
                 }
                 if (firstRestored) {
-                    // No sessions were actually restored (all empty), show chat
-                    cardLayout.show(this, CHAT_CARD)
+                    // No sessions were actually restored (all empty), show landing screen
+                    showLandingScreen()
                 } else {
                     cardLayout.show(this, CHAT_CARD)
                 }
@@ -334,7 +396,8 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                     savedState.uiLog.forEach { addMessageBubbleToActiveTab(it.role, it.text, recordUiLog = false) }
                     cardLayout.show(this, CHAT_CARD)
                 } else {
-                    cardLayout.show(this, CHAT_CARD)
+                    // No saved sessions — show landing screen
+                    showLandingScreen()
                 }
             }
         }
@@ -368,7 +431,6 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
 
         val settingsItem = JMenuItem("Settings", AllIcons.General.Settings)
         settingsItem.addActionListener {
-            syncSetupFieldsFromSettings()
             cardLayout.show(this, SETUP_CARD)
         }
         popup.add(settingsItem)
@@ -475,187 +537,20 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
         popup.show(source, 0, source.height)
     }
 
-    private fun syncSetupFieldsFromSettings() {
-        baseUrlField.text = settings.state.baseUrl
-        modelField.text = settings.state.model
-        apiKeyField.text = settings.getApiKey() ?: ""
-        maxStepsField.text = settings.state.maxSteps.toString()
-        maxContextTokensField.text = settings.state.maxContextTokens.toString()
-        maxOutputTokensField.text = settings.state.maxOutputTokens.toString()
-        multiProviderCheckBox.isSelected = settings.isMultiProviderEnabled()
-        dynamicRoutingCheckBox.isSelected = settings.isDynamicRoutingEnabled()
-        refreshProviderListModel()
-    }
-
-    private fun refreshProviderListModel() {
-        providerListModel.clear()
-        for (p in settings.getProviders()) {
-            val modelCount = p.models.size
-            providerListModel.addElement("${p.name} | ${p.baseUrl} | ${p.authHeaderType} | $modelCount models")
-        }
-    }
-
-    private fun saveAllSettings() {
-        settings.state.baseUrl = baseUrlField.text.trim()
-        settings.state.model = modelField.text.trim()
-        settings.setApiKey(String(apiKeyField.password))
-        settings.state.maxSteps = maxStepsField.text.trim().toIntOrNull() ?: 25
-        settings.state.maxContextTokens = maxContextTokensField.text.trim().toIntOrNull() ?: 32768
-        settings.state.maxOutputTokens = maxOutputTokensField.text.trim().toIntOrNull() ?: 4096
-        settings.setMultiProviderEnabled(multiProviderCheckBox.isSelected)
-        settings.setDynamicRoutingEnabled(dynamicRoutingCheckBox.isSelected)
-        // Update usage tracker with new context limit
-        usageTracker.updateMaxContextTokens(settings.state.maxContextTokens.coerceAtLeast(1024))
-        usageCounterPanel.updateMaxContextTokens(settings.state.maxContextTokens.coerceAtLeast(1024))
-    }
-
-    private fun showAddProviderDialog() {
-        val nameField = JBTextField()
-        val urlField = JBTextField()
-        val keyField = JPasswordField()
-        val authCombo = JComboBox(arrayOf("Bearer (Authorization header)", "x-api-key header"))
-
-        val dialogPanel = panel {
-            row("Provider Name:") { cell(nameField).align(Align.FILL) }
-            row("Base URL:") { cell(urlField).align(Align.FILL) }
-            row("API Key:") { cell(keyField).align(Align.FILL) }
-            row("Auth Type:") { cell(authCombo).align(Align.FILL) }
-        }
-
-        val dialog = object : com.intellij.openapi.ui.DialogWrapper(project, false) {
-            init { init() }
-            override fun createCenterPanel(): JComponent = dialogPanel
-        }
-        dialog.title = "Add Provider"
-        dialog.show()
-
-        if (dialog.exitCode == com.intellij.openapi.ui.DialogWrapper.OK_EXIT_CODE) {
-            val name = nameField.text.trim()
-            val url = urlField.text.trim()
-            val key = String(keyField.password).trim()
-            if (name.isNotEmpty() && url.isNotEmpty()) {
-                val authType = if (authCombo.selectedIndex == 1)
-                    com.aiagent.chat.model.AuthHeaderType.X_API_KEY
-                else
-                    com.aiagent.chat.model.AuthHeaderType.BEARER
-                val id = "prov_${System.currentTimeMillis()}"
-                val provider = com.aiagent.chat.model.ProviderConfig(
-                    id = id, name = name, baseUrl = url, apiKey = key, authHeaderType = authType
-                )
-                settings.addProvider(provider)
-                refreshProviderListModel()
-                // Try to sync models in background
-                scope.launch {
-                    try {
-                        val synced = providerManager.addProvider(provider)
-                        settings.addProvider(synced)
-                        SwingUtilities.invokeLater { refreshProviderListModel() }
-                    } catch (_: Exception) { }
-                }
+    /**
+     * Show the landing/welcome screen with historical sessions.
+     * Called on startup (when no sessions to restore) and when the last tab is closed.
+     */
+    private fun showLandingScreen() {
+        val sessions = persistence.loadSessionsIndex()
+        // Find the LandingPanel component and update its session list
+        for (component in components) {
+            if (component is LandingPanel) {
+                component.updateSessions(sessions)
+                break
             }
         }
-    }
-
-    private fun removeSelectedProvider() {
-        val idx = providerList.selectedIndex
-        if (idx < 0) return
-        val providers = settings.getProviders()
-        if (idx < providers.size) {
-            settings.removeProvider(providers[idx].id)
-            providerManager.removeProvider(providers[idx].id)
-            refreshProviderListModel()
-        }
-    }
-
-    private fun buildSetupPanel(): JPanel {
-        syncSetupFieldsFromSettings()
-
-        return panel {
-            row {
-                label("AI Agent Chat - Settings").applyToComponent {
-                    font = font.deriveFont(java.awt.Font.BOLD, 16f)
-                }
-            }
-            row { label("Configure your API connection and agent parameters.") }
-            separator()
-
-            // --- Connection ---
-            row {
-                label("Connection").applyToComponent {
-                    font = font.deriveFont(java.awt.Font.BOLD, 13f)
-                }
-            }
-            row("Base URL:") { cell(baseUrlField).align(Align.FILL) }
-            row("Model:") { cell(modelField).align(Align.FILL) }
-            row("API Key:") { cell(apiKeyField).align(Align.FILL) }
-
-            separator()
-
-            // --- Agent Parameters ---
-            row {
-                label("Agent Parameters").applyToComponent {
-                    font = font.deriveFont(java.awt.Font.BOLD, 13f)
-                }
-            }
-            row("Max Steps:") {
-                cell(maxStepsField).align(Align.FILL)
-                comment("Maximum agent reasoning steps per request (default: 25)")
-            }
-            row("Max Context Tokens:") {
-                cell(maxContextTokensField).align(Align.FILL)
-                comment("Context window size in tokens (default: 32768)")
-            }
-            row("Max Output Tokens:") {
-                cell(maxOutputTokensField).align(Align.FILL)
-                comment("Maximum output tokens per response (default: 4096)")
-            }
-
-            separator()
-
-            // --- Multi-Provider ---
-            row {
-                label("Multi-Provider Architecture").applyToComponent {
-                    font = font.deriveFont(java.awt.Font.BOLD, 13f)
-                }
-            }
-            row { cell(multiProviderCheckBox) }
-            row { cell(dynamicRoutingCheckBox) }
-            row {
-                label("Configured Providers:")
-            }
-            row {
-                cell(providerList).align(Align.FILL)
-            }
-            row {
-                button("Add Provider") {
-                    showAddProviderDialog()
-                }
-                button("Remove Selected") {
-                    removeSelectedProvider()
-                }
-            }
-
-            separator()
-
-            // --- Save / Cancel ---
-            row {
-                button("Save and Start Chat") {
-                    saveAllSettings()
-                    cardLayout.show(this@ChatToolWindowPanel, LANDING_CARD)
-                    scope.launch {
-                        try {
-                            val client = ApiClient(
-                                baseUrl = settings.state.baseUrl,
-                                apiKey = settings.getApiKey() ?: "",
-                                model = settings.state.model
-                            )
-                            val models = client.listModels()
-                            enhancedInputPanel.updateModelList(models)
-                        } catch (_: Exception) { }
-                    }
-                }.align(AlignX.RIGHT)
-            }
-        }.apply { border = JBUI.Borders.empty(16) }
+        cardLayout.show(this, LANDING_CARD)
     }
 
     private fun buildBottomPanel(): JComponent {
