@@ -22,6 +22,8 @@ import com.aiagent.chat.persistence.PersistenceManager
 import com.aiagent.chat.services.ChatStateService
 import com.aiagent.chat.tools.PlatformToolHandler
 import com.aiagent.chat.tools.SlashCommands
+import com.aiagent.chat.tools.SlashCommandContext
+import com.aiagent.chat.tools.SlashCommandAction
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
@@ -620,9 +622,59 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
         addMessageBubbleToActiveTab("user", displayText, referencedFiles)
 
         if (promptText.startsWith("/")) {
-            val res = SlashCommands.processCommand(promptText, project.basePath ?: "")
-            if (res != null) {
-                addMessageBubbleToActiveTab("assistant", res)
+            val activeConv = conversationTabPanel.getActiveConversation()
+            val usageSummary = usageTracker.computeSummary(activeConv?.history?.toList() ?: emptyList())
+            val plan = planManager.getPlan()
+            val ctx = SlashCommandContext(
+                projectRoot = project.basePath ?: "",
+                baseUrl = settings.state.baseUrl,
+                model = settings.state.model,
+                apiKey = settings.getApiKey() ?: "",
+                maxSteps = settings.state.maxSteps,
+                approvalMode = settings.state.approvalMode,
+                maxContextTokens = settings.state.maxContextTokens,
+                maxOutputTokens = settings.state.maxOutputTokens,
+                multiProviderEnabled = settings.isMultiProviderEnabled(),
+                dynamicRoutingEnabled = settings.isDynamicRoutingEnabled(),
+                providers = settings.getProviders(),
+                folderMemory = persistence.loadFolderMemory(),
+                globalMemory = persistence.loadGlobalMemory(),
+                summaryMemory = persistence.loadSummaryMemory(),
+                sessionCount = conversationTabPanel.getAllConversations().size,
+                activeMessageCount = activeConv?.history?.size ?: 0,
+                todoCount = todoList.size,
+                hasPlan = plan != null,
+                planSummary = plan?.toSystemPromptSection()?.trim() ?: "",
+                currentSessionTokens = usageSummary.currentSessionTokens,
+                totalInputTokens = usageSummary.totalInputTokens,
+                totalOutputTokens = usageSummary.totalOutputTokens
+            )
+            val result = SlashCommands.processCommand(promptText, ctx)
+            if (result != null) {
+                addMessageBubbleToActiveTab("assistant", result.message)
+                when (result.action) {
+                    SlashCommandAction.CLEAR_CONVERSATION -> {
+                        val conv = conversationTabPanel.getActiveConversation()
+                        conv?.history?.clear()
+                        conv?.uiLog?.clear()
+                        conv?.messageContainer?.let { container ->
+                            SwingUtilities.invokeLater {
+                                container.components.forEach { c ->
+                                    if (c !== conv?.fillerComponent) container.remove(c)
+                                }
+                                conv?.currentRow = 0
+                                conv?.fillerGbc?.gridy = 9999
+                                container.revalidate()
+                                container.repaint()
+                            }
+                        }
+                        usageTracker.reset()
+                    }
+                    SlashCommandAction.NEW_SESSION -> {
+                        conversationTabPanel.onNewTab?.invoke()
+                    }
+                    null -> { /* no action */ }
+                }
                 activeConversationId = null
                 return
             }
