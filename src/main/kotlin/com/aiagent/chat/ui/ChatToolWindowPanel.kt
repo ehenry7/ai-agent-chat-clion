@@ -528,7 +528,7 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
         popup.add(settingsItem)
 
         // Sessions View — go to landing/welcome screen
-        val sessionsItem = JMenuItem("Sessions View", AllIcons.Project.ToolWindow)
+        val sessionsItem = JMenuItem("Sessions View", AllIcons.Nodes.Folder)
         sessionsItem.addActionListener {
             showLandingScreen()
         }

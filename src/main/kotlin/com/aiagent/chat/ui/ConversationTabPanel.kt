@@ -375,7 +375,7 @@ class ConversationTabPanel : JBPanel<ConversationTabPanel>(BorderLayout()) {
         popup.addSeparator()
 
         // Sessions View — go to landing/welcome screen
-        val sessionsItem = javax.swing.JMenuItem("Sessions View", AllIcons.Project.ToolWindow)
+        val sessionsItem = javax.swing.JMenuItem("Sessions View", AllIcons.Nodes.Folder)
         sessionsItem.addActionListener {
             onSessionsView?.invoke()
         }
