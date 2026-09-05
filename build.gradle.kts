@@ -20,6 +20,9 @@ tasks.withType<JavaCompile>().configureEach {
 }
 tasks.test {
     useJUnitPlatform()
+    // Test isolation: use build-specific directories for test home and config
+    systemProperty("aiagent.test.home", layout.buildDirectory.dir("test-home").get().asFile.absolutePath)
+    systemProperty("aiagent.test.config", layout.buildDirectory.dir("test-config").get().asFile.absolutePath)
     testLogging {
         events("passed", "skipped", "failed", "standardOut", "standardError")
         showStandardStreams = true
@@ -72,7 +75,7 @@ intellijPlatform {
         version = project.version.toString()
         ideaVersion {
             sinceBuild = "242.0"
-            untilBuild = "242.*"
+            untilBuild = provider { null }
         }
     }
     pluginVerification {

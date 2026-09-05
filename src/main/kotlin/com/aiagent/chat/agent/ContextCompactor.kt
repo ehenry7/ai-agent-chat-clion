@@ -217,16 +217,28 @@ class ContextCompactor(
     private suspend fun summarizeSegment(messages: List<ChatMessage>): String {
         // Check if we hit the cap
         if (messages.size > MAX_MESSAGES_TO_SUMMARIZE) {
-            DebugLog.warn("ContextCompactor", "Message count (${messages.size}) exceeds MAX_MESSAGES_TO_SUMMARIZE ($MAX_MESSAGES_TO_SUMMARIZE). Messages beyond this cap will be dropped from the summary!")
+            DebugLog.warn("ContextCompactor", "Message count (${messages.size}) exceeds MAX_MESSAGES_TO_SUMMARIZE ($MAX_MESSAGES_TO_SUMMARIZE). ${messages.size - MAX_MESSAGES_TO_SUMMARIZE} older messages will be dropped from the summary!")
         }
+        val droppedCount = if (messages.size > MAX_MESSAGES_TO_SUMMARIZE) messages.size - MAX_MESSAGES_TO_SUMMARIZE else 0
 
         // Build a text representation of the messages to summarize
-        val conversationText = messages.take(MAX_MESSAGES_TO_SUMMARIZE).joinToString("\n") { msg ->
-            val role = msg.role.name.lowercase()
-            val content = msg.content?.take(SUMMARIZE_CONTENT_LIMIT) ?: "[tool_calls]"
-            val toolInfo = if (msg.toolCalls != null) " [tools: ${msg.toolCalls.joinToString { it.function.name }}]" else ""
-            "[$role]$toolInfo: $content"
-        }
+        // Loud truncation markers: show "[showing X of Y chars]" when content is truncated
+        val conversationText = buildString {
+            messages.take(MAX_MESSAGES_TO_SUMMARIZE).forEach { msg ->
+                val role = msg.role.name.lowercase()
+                val rawContent = msg.content ?: "[tool_calls]"
+                val content = if (rawContent.length > SUMMARIZE_CONTENT_LIMIT) {
+                    "${rawContent.take(SUMMARIZE_CONTENT_LIMIT)}\n... [showing $SUMMARIZE_CONTENT_LIMIT of ${rawContent.length} chars - content truncated]"
+                } else {
+                    rawContent
+                }
+                val toolInfo = if (msg.toolCalls != null) " [tools: ${msg.toolCalls.joinToString { it.function.name }}]" else ""
+                appendLine("[$role]$toolInfo: $content")
+            }
+            if (droppedCount > 0) {
+                appendLine("[NOTE: $droppedCount older messages were dropped from this summary due to the $MAX_MESSAGES_TO_SUMMARIZE message cap]")
+            }
+        }.trimEnd()
 
         // Incorporate rolling summary if available
         val rollingSummarySection = if (lastSummary != null) {

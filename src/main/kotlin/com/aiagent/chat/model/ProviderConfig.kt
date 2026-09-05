@@ -69,6 +69,7 @@ data class ProviderConfig(
     val baseUrl: String,
     val apiKey: String,
     val authHeaderType: AuthHeaderType = AuthHeaderType.BEARER,
+    val enabled: Boolean = true,
     val models: List<ModelInfo> = emptyList()
 ) {
     fun toApiHeaders(): Map<String, String> {

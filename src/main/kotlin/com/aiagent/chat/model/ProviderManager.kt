@@ -195,7 +195,10 @@ class ProviderManager {
      * and can make routing decisions.
      */
     fun toSystemPromptSection(): String {
-        if (_allModels.isEmpty()) return ""
+        // Only include enabled providers and their models
+        val enabledProvs = _providers.filter { it.enabled }
+        val enabledMdls = enabledProvs.flatMap { it.models }
+        if (enabledMdls.isEmpty()) return ""
 
         val sb = StringBuilder()
         sb.append("\n<available_models>\n")
@@ -208,8 +211,8 @@ class ProviderManager {
         sb.append("- XL tasks (deep reasoning, system design, complex debugging): prefer XL/high-cost models\n\n")
         sb.append("Models:\n")
 
-        // Group by provider for readability
-        _providers.forEach { provider ->
+        // Group by provider for readability (only enabled providers)
+        enabledProvs.forEach { provider ->
             if (provider.models.isNotEmpty()) {
                 sb.append("  Provider: ${provider.name} (${provider.baseUrl})\n")
                 provider.models.forEach { m ->

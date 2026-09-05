@@ -1,6 +1,7 @@
 package com.aiagent.chat.tools
 
 import com.aiagent.chat.model.ProviderConfig
+import com.aiagent.chat.util.IdeaLogReader
 import java.io.File
 
 /**
@@ -87,6 +88,8 @@ object SlashCommands {
             "init" -> SlashCommandResult(initProject(context))
             "clear" -> SlashCommandResult("Conversation cleared.", SlashCommandAction.CLEAR_CONVERSATION)
             "new" -> SlashCommandResult("New session started.", SlashCommandAction.NEW_SESSION)
+            "logs" -> SlashCommandResult(formatLogs(parts.drop(1)))
+            "health" -> SlashCommandResult(formatHealth())
             else -> null
         }
     }
@@ -288,6 +291,88 @@ object SlashCommands {
         if (key.isBlank()) return "_Not set_"
         if (key.length <= 8) return "****"
         return key.take(4) + "****" + key.takeLast(4)
+    }
+
+    /**
+     * Format IDE log entries for the /logs slash command.
+     * Supports optional arguments: /logs error, /logs warn, /logs <search-pattern>
+     */
+    fun formatLogs(args: List<String>): String {
+        val lines = mutableListOf<String>()
+        lines.add("## IDE Logs")
+        lines.add("")
+
+        val summary = IdeaLogReader.getSummary()
+        lines.add("```")
+        lines.add(summary)
+        lines.add("```")
+        lines.add("")
+
+        val logLines = if (args.isNotEmpty()) {
+            val arg = args.joinToString(" ")
+            when (arg.uppercase()) {
+                "ERROR", "ERR" -> IdeaLogReader.readByLevel("ERROR", 50)
+                "WARN", "WARNING" -> IdeaLogReader.readByLevel("WARN", 50)
+                "INFO" -> IdeaLogReader.readByLevel("INFO", 50)
+                else -> IdeaLogReader.search(arg, 50)
+            }
+        } else {
+            IdeaLogReader.readRecent(50)
+        }
+
+        if (logLines.isEmpty()) {
+            lines.add("_No log entries found._")
+        } else {
+            lines.add("### Recent Entries (${logLines.size})")
+            lines.add("```")
+            for (line in logLines) {
+                lines.add(line)
+            }
+            lines.add("```")
+        }
+
+        return lines.joinToString("\n")
+    }
+
+    /**
+     * Format runtime health diagnostics for the /health slash command.
+     */
+    fun formatHealth(): String {
+        val lines = mutableListOf<String>()
+        lines.add("## Runtime Health")
+        lines.add("")
+
+        // Memory info
+        val runtime = Runtime.getRuntime()
+        val usedMB = (runtime.totalMemory() - runtime.freeMemory()) / (1024 * 1024)
+        val maxMB = runtime.maxMemory() / (1024 * 1024)
+        val pct = if (maxMB > 0) (usedMB.toDouble() / maxMB) * 100 else 0.0
+        lines.add("### Memory")
+        lines.add("- **Heap Used:** ${usedMB}MB / ${maxMB}MB (${pct.toInt()}%)")
+        if (pct >= 85.0) {
+            lines.add("- **WARNING:** Memory usage above 85%")
+        }
+        if (pct >= 95.0) {
+            lines.add("- **CRITICAL:** Memory usage above 95%")
+        }
+        lines.add("")
+
+        // Thread info
+        val threadCount = Thread.activeCount()
+        lines.add("### Threads")
+        lines.add("- **Active Threads:** $threadCount")
+        if (threadCount > 200) {
+            lines.add("- **WARNING:** High thread count (possible coroutine leak)")
+        }
+        lines.add("")
+
+        // Available processors
+        lines.add("### System")
+        lines.add("- **Available Processors:** ${runtime.availableProcessors()}")
+        lines.add("- **Java Version:** ${System.getProperty("java.version")}")
+        lines.add("")
+
+        return lines.joinToString("\n")
     }
 
     private fun countFilesRecursively(dir: File, maxDepth: Int, currentDepth: Int = 0): Int {

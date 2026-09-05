@@ -183,7 +183,7 @@ class SlashCommandsTest {
     @Test
     fun `config command shows multi-provider status`() {
         val ctxEnabled = makeContext(multiProviderEnabled = true, providers = listOf(
-            ProviderConfig("p1", "Provider1", "http://p1.com", "key1", AuthHeaderType.BEARER, emptyList())
+            ProviderConfig("p1", "Provider1", "http://p1.com", "key1", AuthHeaderType.BEARER, models = emptyList())
         ))
         val result = SlashCommands.processCommand("/config", ctxEnabled)
         assertNotNull(result)

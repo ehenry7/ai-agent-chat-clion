@@ -1,5 +1,6 @@
 package com.aiagent.chat.agent
 
+import com.aiagent.chat.debug.DebugLog
 import com.aiagent.chat.model.*
 
 /**
@@ -29,6 +30,11 @@ class UsageTracker(
     // --- Estimated token breakdown by category ---
     // We estimate by proportional content length, same approach as refact-main's useTokenMap.
     private var categoryTokens = mutableMapOf<String, Int>()
+
+    // --- Last known session tokens (prevents counter dropping to zero between turns) ---
+    // Bug fix: upstream refact-main had an issue where the usage counter dropped to zero
+    // between turns when the API didn't return usage data. We persist the last non-zero value.
+    private var lastKnownSessionTokens: Int = 0
 
     data class CompactionEvent(
         val messagesBefore: Int,
@@ -244,5 +250,6 @@ class UsageTracker(
         messageUsages.clear()
         compactionEvents.clear()
         categoryTokens.clear()
+        lastKnownSessionTokens = 0
     }
 }

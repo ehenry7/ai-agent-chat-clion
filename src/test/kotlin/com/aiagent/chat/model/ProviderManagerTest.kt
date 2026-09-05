@@ -27,7 +27,7 @@ class ProviderManagerTest {
             ModelInfo("model-a", "p1", "TestProvider", ModelSize.SMALL, ModelCost.FREE),
             ModelInfo("model-b", "p1", "TestProvider", ModelSize.LARGE, ModelCost.HIGH_COST)
         )
-        val provider = ProviderConfig("p1", "TestProvider", "http://localhost:8080", "key", AuthHeaderType.BEARER, models)
+        val provider = ProviderConfig("p1", "TestProvider", "http://localhost:8080", "key", AuthHeaderType.BEARER, models = models)
         pm.addProviderOffline(provider)
         assertEquals(2, pm.allModels.size)
     }
@@ -36,7 +36,7 @@ class ProviderManagerTest {
     fun `removeProvider removes provider and its models`() {
         val pm = ProviderManager()
         val models = listOf(ModelInfo("model-a", "p1", "TestProvider", ModelSize.SMALL, ModelCost.FREE))
-        val provider = ProviderConfig("p1", "TestProvider", "http://localhost:8080", "key", AuthHeaderType.BEARER, models)
+        val provider = ProviderConfig("p1", "TestProvider", "http://localhost:8080", "key", AuthHeaderType.BEARER, models = models)
         pm.addProviderOffline(provider)
         assertEquals(1, pm.providers.size)
         assertEquals(1, pm.allModels.size)
@@ -74,7 +74,7 @@ class ProviderManagerTest {
     fun `findProviderForModel returns correct provider`() {
         val pm = ProviderManager()
         val models = listOf(ModelInfo("model-a", "p1", "TestProvider", ModelSize.SMALL, ModelCost.FREE))
-        val provider = ProviderConfig("p1", "TestProvider", "http://localhost:8080", "key", AuthHeaderType.BEARER, models)
+        val provider = ProviderConfig("p1", "TestProvider", "http://localhost:8080", "key", AuthHeaderType.BEARER, models = models)
         pm.addProviderOffline(provider)
 
         val found = pm.findProviderForModel("model-a")
@@ -91,7 +91,7 @@ class ProviderManagerTest {
             ModelInfo("model-a", "p1", "TestProvider", ModelSize.SMALL, ModelCost.FREE),
             ModelInfo("model-b", "p1", "TestProvider", ModelSize.LARGE, ModelCost.HIGH_COST)
         )
-        val provider = ProviderConfig("p1", "TestProvider", "http://localhost:8080", "key", AuthHeaderType.BEARER, models)
+        val provider = ProviderConfig("p1", "TestProvider", "http://localhost:8080", "key", AuthHeaderType.BEARER, models = models)
         pm.addProviderOffline(provider)
 
         val found = pm.findModel("model-b")
@@ -105,9 +105,9 @@ class ProviderManagerTest {
     fun `clear removes all providers and models`() {
         val pm = ProviderManager()
         pm.addProviderOffline(ProviderConfig("p1", "P1", "http://localhost", "key", AuthHeaderType.BEARER,
-            listOf(ModelInfo("m1", "p1", "P1", ModelSize.SMALL, ModelCost.FREE))))
+            models = listOf(ModelInfo("m1", "p1", "P1", ModelSize.SMALL, ModelCost.FREE))))
         pm.addProviderOffline(ProviderConfig("p2", "P2", "http://localhost", "key", AuthHeaderType.BEARER,
-            listOf(ModelInfo("m2", "p2", "P2", ModelSize.LARGE, ModelCost.HIGH_COST))))
+            models = listOf(ModelInfo("m2", "p2", "P2", ModelSize.LARGE, ModelCost.HIGH_COST))))
 
         assertEquals(2, pm.providers.size)
         assertEquals(2, pm.allModels.size)
@@ -130,7 +130,7 @@ class ProviderManagerTest {
             ModelInfo("gpt-4o-mini", "p1", "OpenAI", ModelSize.SMALL, ModelCost.LOW_COST),
             ModelInfo("o1-preview", "p1", "OpenAI", ModelSize.XL, ModelCost.HIGH_COST)
         )
-        pm.addProviderOffline(ProviderConfig("p1", "OpenAI", "http://localhost", "key", AuthHeaderType.BEARER, models))
+        pm.addProviderOffline(ProviderConfig("p1", "OpenAI", "http://localhost", "key", AuthHeaderType.BEARER, models = models))
 
         val section = pm.toSystemPromptSection()
         assertTrue(section.contains("<available_models>"))
@@ -149,9 +149,9 @@ class ProviderManagerTest {
     fun `toSystemPromptSection groups models by provider`() {
         val pm = ProviderManager()
         pm.addProviderOffline(ProviderConfig("p1", "OpenAI", "http://openai", "key", AuthHeaderType.BEARER,
-            listOf(ModelInfo("gpt-4o", "p1", "OpenAI", ModelSize.LARGE, ModelCost.HIGH_COST))))
+            models = listOf(ModelInfo("gpt-4o", "p1", "OpenAI", ModelSize.LARGE, ModelCost.HIGH_COST))))
         pm.addProviderOffline(ProviderConfig("p2", "Anthropic", "http://anthropic", "key", AuthHeaderType.X_API_KEY,
-            listOf(ModelInfo("claude-3-opus", "p2", "Anthropic", ModelSize.XL, ModelCost.HIGH_COST))))
+            models = listOf(ModelInfo("claude-3-opus", "p2", "Anthropic", ModelSize.XL, ModelCost.HIGH_COST))))
 
         val section = pm.toSystemPromptSection()
         assertTrue(section.contains("Provider: OpenAI"))
@@ -164,9 +164,9 @@ class ProviderManagerTest {
     fun `multiple providers contribute to allModels`() {
         val pm = ProviderManager()
         pm.addProviderOffline(ProviderConfig("p1", "P1", "http://p1", "key", AuthHeaderType.BEARER,
-            listOf(ModelInfo("m1", "p1", "P1", ModelSize.SMALL, ModelCost.FREE))))
+            models = listOf(ModelInfo("m1", "p1", "P1", ModelSize.SMALL, ModelCost.FREE))))
         pm.addProviderOffline(ProviderConfig("p2", "P2", "http://p2", "key", AuthHeaderType.X_API_KEY,
-            listOf(ModelInfo("m2", "p2", "P2", ModelSize.LARGE, ModelCost.HIGH_COST),
+            models = listOf(ModelInfo("m2", "p2", "P2", ModelSize.LARGE, ModelCost.HIGH_COST),
                    ModelInfo("m3", "p2", "P2", ModelSize.XL, ModelCost.HIGH_COST))))
 
         assertEquals(3, pm.allModels.size)
