@@ -52,12 +52,16 @@ data class ModelInfo(
     val id: String,
     val providerId: String,
     val providerName: String = "",
+    val name: String = "",
     val sizeTag: ModelSize = ModelSize.MEDIUM,
     val costTag: ModelCost = ModelCost.LOW_COST,
     val maxContextTokens: Int = 32768,
-    val maxOutputTokens: Int = 4096
+    val maxOutputTokens: Int = 4096,
+    val enabled: Boolean = true,
+    val measured: Boolean = false,
+    val latencyMs: Long = 0
 ) {
-    val displayName: String get() = if (providerName.isNotBlank()) "$id ($providerName)" else id
+    val displayName: String get() = if (providerName.isNotBlank()) "$providerName/${name.ifBlank { id }}" else name.ifBlank { id }
 }
 
 /**
@@ -72,6 +76,7 @@ data class ProviderConfig(
     val apiKey: String,
     val authHeaderType: AuthHeaderType = AuthHeaderType.BEARER,
     val enabled: Boolean = true,
+    val isDefault: Boolean = false,
     val models: List<ModelInfo> = emptyList()
 ) {
     fun toApiHeaders(): Map<String, String> {

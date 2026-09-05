@@ -1,8 +1,11 @@
 package com.aiagent.chat.ui
 
 import com.aiagent.chat.model.AuthHeaderType
+import com.aiagent.chat.model.ModelCost
 import com.aiagent.chat.model.ModelInfo
+import com.aiagent.chat.model.ModelSize
 import com.aiagent.chat.model.ProviderConfig
+import com.aiagent.chat.model.ProviderManager
 import com.aiagent.chat.services.ChatStateService
 import com.intellij.icons.AllIcons
 import com.intellij.ui.JBColor
@@ -11,19 +14,29 @@ import com.intellij.ui.components.JBPanel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
+import kotlinx.coroutines.*
 import java.awt.BorderLayout
 import java.awt.CardLayout
 import java.awt.FlowLayout
 import java.awt.GridLayout
-import java.awt.event.MouseAdapter
-import java.awt.event.MouseEvent
 import javax.swing.*
+import javax.swing.table.DefaultTableModel
+import javax.swing.table.TableCellEditor
+import javax.swing.table.TableCellRenderer
 
 /**
- * Provider-only setup panel — no standalone base-url/api-key/model fields.
- * Everything is configured through providers and their models.
- * Per-model context and output token settings.
- * All UI is inline within the chat window — no popup dialogs.
+ * Provider-only setup panel v2.
+ *
+ * Features:
+ *  - Provider table (Enabled, Name, URL, Key) with add/edit/remove via popup
+ *  - Model table (Enabled, Name, Id, Type, Cost, Context, Output) — all editable
+ *  - Test Connection button (auto-detects auth type)
+ *  - Measure button (measures TEE timing, disables failed models)
+ *  - Default model selector (auto-selects best performance)
+ *  - Default provider selector
+ *  - No auth-type display (auto-detected on test/sync)
+ *  - Auto-fetches models after successful connection test
+ *  - All boxes top-aligned, minimal spacing
  */
 class ProviderSetupPanel(
     private val settings: ChatStateService,
@@ -31,51 +44,74 @@ class ProviderSetupPanel(
     private val onCancel: () -> Unit
 ) : JBPanel<ProviderSetupPanel>(BorderLayout()) {
 
-    // --- Provider list ---
-    private val providerListModel = DefaultListModel<ProviderConfig>()
-    private val providerList = JList(providerListModel).apply {
-        cellRenderer = ProviderListCellRenderer()
-        selectionMode = ListSelectionModel.SINGLE_SELECTION
+    private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+
+    // --- Provider table ---
+    private val providerTableModel = DefaultTableModel(0, 4)
+    private val providerTable = JTable(providerTableModel).apply {
+        columnModel.getColumn(0).headerValue = "Enabled"
+        columnModel.getColumn(0).preferredWidth = 50
+        columnModel.getColumn(1).headerValue = "Name"
+        columnModel.getColumn(1).preferredWidth = 120
+        columnModel.getColumn(2).headerValue = "URL"
+        columnModel.getColumn(2).preferredWidth = 250
+        columnModel.getColumn(3).headerValue = "Key"
+        columnModel.getColumn(3).preferredWidth = 80
+        rowHeight = 24
+        autoCreateRowSorter = true
     }
 
-    // --- Inline provider form ---
-    private val formNameField = JBTextField()
-    private val formUrlField = JBTextField()
-    private val formKeyField = JPasswordField()
-    private val formAuthCombo = JComboBox(arrayOf("Bearer (Authorization header)", "x-api-key header"))
-    private val formCardPanel = JPanel(CardLayout())
-    private val formCardLayout get() = formCardPanel.layout as CardLayout
-    private val FORM_EMPTY = "EMPTY"
-    private val FORM_EDIT = "EDIT"
-
-    private var editingProviderId: String? = null
-
-    // --- Model list for selected provider ---
-    private val modelListModel = DefaultListModel<ModelInfo>()
-    private val modelList = JList(modelListModel).apply {
-        cellRenderer = ModelListCellRenderer()
-        selectionMode = ListSelectionModel.SINGLE_SELECTION
+    // --- Model table ---
+    private val modelTableModel = DefaultTableModel(0, 7)
+    private val modelTable = JTable(modelTableModel).apply {
+        columnModel.getColumn(0).headerValue = "Enabled"
+        columnModel.getColumn(0).preferredWidth = 50
+        columnModel.getColumn(1).headerValue = "Name"
+        columnModel.getColumn(1).preferredWidth = 120
+        columnModel.getColumn(2).headerValue = "Id"
+        columnModel.getColumn(2).preferredWidth = 150
+        columnModel.getColumn(3).headerValue = "Type"
+        columnModel.getColumn(3).preferredWidth = 70
+        columnModel.getColumn(4).headerValue = "Cost"
+        columnModel.getColumn(4).preferredWidth = 70
+        columnModel.getColumn(5).headerValue = "Context"
+        columnModel.getColumn(5).preferredWidth = 70
+        columnModel.getColumn(6).headerValue = "Output"
+        columnModel.getColumn(6).preferredWidth = 70
+        rowHeight = 24
     }
 
-    // --- Per-model token fields ---
-    private val modelContextTokensField = JBTextField()
-    private val modelOutputTokensField = JBTextField()
+    // --- Default model selector ---
+    private val defaultModelCombo = JComboBox<String>()
 
-    // --- Active model selector ---
-    private val activeModelCombo = JComboBox<ModelInfo>()
+    // --- Default provider selector ---
+    private val defaultProviderCombo = JComboBox<String>()
 
-    // --- Max steps (agent parameter, not per-model) ---
+    // --- Agent params ---
     private val maxStepsField = JBTextField()
 
+    // --- Status label for test/measure feedback ---
+    private val statusLabel = JBLabel(" ").apply {
+        font = font.deriveFont(java.awt.Font.PLAIN, 11f)
+        foreground = JBColor(0x666666, 0x999999)
+    }
+
+    // --- Currently selected provider for model table display ---
+    private var selectedProviderId: String? = null
+
+    // --- Provider edit popup fields ---
+    private val popupNameField = JBTextField()
+    private val popupUrlField = JBTextField()
+    private val popupKeyField = JPasswordField()
+
     init {
-        border = JBUI.Borders.empty(16)
+        border = JBUI.Borders.empty(8)
         background = JBColor.PanelBackground
 
-        val scrollContent = JPanel(GridLayout(0, 1, 0, 12)).apply { isOpaque = false }
-        scrollContent.add(buildHeaderSection())
+        // Top-aligned content with minimal spacing
+        val scrollContent = JPanel(GridLayout(0, 1, 0, 4)).apply { isOpaque = false }
         scrollContent.add(buildProviderSection())
         scrollContent.add(buildModelSection())
-        scrollContent.add(buildActiveModelSection())
         scrollContent.add(buildAgentParamsSection())
 
         val scrollPane = JBScrollPane(scrollContent).apply {
@@ -84,228 +120,185 @@ class ProviderSetupPanel(
             verticalScrollBarPolicy = ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED
         }
         add(scrollPane, BorderLayout.CENTER)
-        add(buildButtonBar(), BorderLayout.SOUTH)
 
-        // Wire up list selection
-        providerList.addListSelectionListener { e ->
-            if (!e.valueIsAdjusting) {
-                onProviderSelected()
+        // Bottom: status + buttons
+        val bottomPanel = JPanel(BorderLayout()).apply {
+            isOpaque = false
+            border = JBUI.Borders.empty(4, 0, 0, 0)
+        }
+        bottomPanel.add(statusLabel, BorderLayout.WEST)
+        bottomPanel.add(buildButtonBar(), BorderLayout.EAST)
+        add(bottomPanel, BorderLayout.SOUTH)
+
+        // Wire provider table selection
+        providerTable.selectionModel.addListSelectionListener { e ->
+            if (!e.valueIsAdjusting && providerTable.selectedRow >= 0) {
+                val modelRow = providerTable.convertRowIndexToModel(providerTable.selectedRow)
+                selectedProviderId = providerTableModel.getValueAt(modelRow, 1)?.toString()
+                // Find provider by name and load its models
+                val provider = settings.getProviders().find { it.name == selectedProviderId }
+                if (provider != null) {
+                    selectedProviderId = provider.id
+                    refreshModelTable(provider)
+                }
             }
         }
-        modelList.addListSelectionListener { e ->
-            if (!e.valueIsAdjusting) {
-                onModelSelected()
-            }
-        }
 
-        refreshProviderList()
-        refreshActiveModelCombo()
+        refreshProviderTable()
+        refreshDefaultCombos()
         syncFieldsFromSettings()
+
+        // Requirement 1: if no providers, auto-start add provider
+        if (settings.getProviders().isEmpty()) {
+            SwingUtilities.invokeLater { showAddProviderPopup() }
+        }
     }
 
     // ----------------------------------------------------------------
     // Section builders
     // ----------------------------------------------------------------
 
-    private fun buildHeaderSection(): JComponent {
-        val panel = JPanel(BorderLayout()).apply { isOpaque = false }
-        panel.add(JBLabel("Configure Providers").apply {
-            font = font.deriveFont(java.awt.Font.BOLD, 16f)
-        }, BorderLayout.WEST)
-        panel.add(JBLabel("Set up your AI providers and models. Context and output sizes are per-model.").apply {
-            font = font.deriveFont(java.awt.Font.PLAIN, 11f)
-            foreground = JBColor(0x666666, 0x999999)
-        }, BorderLayout.SOUTH)
-        return panel
-    }
-
     private fun buildProviderSection(): JComponent {
-        val outer = JPanel(BorderLayout()).apply { isOpaque = false }
+        val outer = JPanel(BorderLayout(0, 4)).apply { isOpaque = false }
         outer.border = JBUI.Borders.compound(
             JBUI.Borders.customLine(JBColor.border(), 1),
-            JBUI.Borders.empty(12)
+            JBUI.Borders.empty(6)
         )
 
-        // Title row
+        // Title row with buttons
         val titleRow = JPanel(BorderLayout()).apply { isOpaque = false }
         titleRow.add(JBLabel("Providers").apply {
             font = font.deriveFont(java.awt.Font.BOLD, 13f)
         }, BorderLayout.WEST)
 
+        val btnPanel = JPanel(FlowLayout(FlowLayout.RIGHT, 2, 0)).apply { isOpaque = false }
         val addBtn = JButton("Add", AllIcons.General.Add).apply {
-            isContentAreaFilled = false
-            isBorderPainted = true
-            cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
             font = font.deriveFont(java.awt.Font.PLAIN, 11f)
-            addActionListener { startAddProvider() }
-        }
-        titleRow.add(addBtn, BorderLayout.EAST)
-        outer.add(titleRow, BorderLayout.NORTH)
-
-        // Provider list (scrollable, fixed height)
-        val listScroll = JBScrollPane(providerList).apply {
-            border = JBUI.Borders.empty()
-            preferredSize = java.awt.Dimension(0, 80)
-            horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
-        }
-        outer.add(listScroll, BorderLayout.CENTER)
-
-        // Inline form (below list)
-        formCardPanel.isOpaque = false
-
-        // Empty state
-        val emptyForm = JPanel(FlowLayout(FlowLayout.CENTER)).apply { isOpaque = false }
-        emptyForm.add(JBLabel("Click 'Add' to create a provider").apply {
-            font = font.deriveFont(java.awt.Font.ITALIC, 11f)
-            foreground = JBColor(0x999999, 0x666666)
-        })
-        formCardPanel.add(emptyForm, FORM_EMPTY)
-
-        // Edit form
-        val editForm = buildProviderEditForm()
-        formCardPanel.add(editForm, FORM_EDIT)
-
-        formCardLayout.show(formCardPanel, FORM_EMPTY)
-        outer.add(formCardPanel, BorderLayout.SOUTH)
-
-        return outer
-    }
-
-    private fun buildProviderEditForm(): JComponent {
-        val panel = JPanel(GridLayout(0, 1, 4, 4)).apply {
-            isOpaque = false
-            border = JBUI.Borders.empty(8, 0, 0, 0)
-        }
-
-        panel.add(JBLabel("Provider Name:").apply { font = font.deriveFont(java.awt.Font.PLAIN, 11f) })
-        panel.add(formNameField)
-        panel.add(JBLabel("Base URL:").apply { font = font.deriveFont(java.awt.Font.PLAIN, 11f) })
-        panel.add(formUrlField)
-        panel.add(JBLabel("API Key:").apply { font = font.deriveFont(java.awt.Font.PLAIN, 11f) })
-        panel.add(formKeyField)
-        panel.add(JBLabel("Auth Type:").apply { font = font.deriveFont(java.awt.Font.PLAIN, 11f) })
-        panel.add(formAuthCombo)
-
-        val btnRow = JPanel(FlowLayout(FlowLayout.LEFT, 4, 4)).apply { isOpaque = false }
-        val saveBtn = JButton("Save Provider").apply {
-            font = font.deriveFont(java.awt.Font.PLAIN, 11f)
-            addActionListener { saveProviderFromForm() }
-        }
-        val cancelBtn = JButton("Cancel").apply {
-            font = font.deriveFont(java.awt.Font.PLAIN, 11f)
-            addActionListener { cancelProviderForm() }
+            addActionListener { showAddProviderPopup() }
         }
         val removeBtn = JButton("Remove", AllIcons.Actions.Cancel).apply {
             font = font.deriveFont(java.awt.Font.PLAIN, 11f)
             foreground = JBColor(0xCC0000, 0xFF6666)
             addActionListener { removeSelectedProvider() }
         }
-        btnRow.add(saveBtn)
-        btnRow.add(cancelBtn)
-        btnRow.add(removeBtn)
-        panel.add(btnRow)
-
-        return panel
-    }
-
-    private fun buildModelSection(): JComponent {
-        val outer = JPanel(BorderLayout()).apply { isOpaque = false }
-        outer.border = JBUI.Borders.compound(
-            JBUI.Borders.customLine(JBColor.border(), 1),
-            JBUI.Borders.empty(12)
-        )
-
-        val titleRow = JPanel(BorderLayout()).apply { isOpaque = false }
-        titleRow.add(JBLabel("Models (for selected provider)").apply {
-            font = font.deriveFont(java.awt.Font.BOLD, 13f)
-        }, BorderLayout.WEST)
-
-        val syncBtn = JButton("Sync Models", AllIcons.Actions.Refresh).apply {
-            isContentAreaFilled = false
-            isBorderPainted = true
-            cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
-            font = font.deriveFont(java.awt.Font.PLAIN, 11f)
-            toolTipText = "Fetch available models from the provider API"
-            addActionListener { syncModels() }
-        }
-        titleRow.add(syncBtn, BorderLayout.EAST)
+        btnPanel.add(addBtn)
+        btnPanel.add(removeBtn)
+        titleRow.add(btnPanel, BorderLayout.EAST)
         outer.add(titleRow, BorderLayout.NORTH)
 
-        // Model list
-        val listScroll = JBScrollPane(modelList).apply {
+        // Provider table in scroll
+        val tableScroll = JBScrollPane(providerTable).apply {
             border = JBUI.Borders.empty()
-            preferredSize = java.awt.Dimension(0, 80)
-            horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
+            preferredSize = java.awt.Dimension(0, 100)
         }
-        outer.add(listScroll, BorderLayout.CENTER)
+        outer.add(tableScroll, BorderLayout.CENTER)
 
-        // Per-model token settings (below model list)
-        val tokenPanel = JPanel(GridLayout(0, 2, 8, 4)).apply {
-            isOpaque = false
-            border = JBUI.Borders.empty(8, 0, 0, 0)
+        // Default provider selector below table
+        val defaultPanel = JPanel(FlowLayout(FlowLayout.LEFT, 4, 2)).apply { isOpaque = false }
+        defaultPanel.add(JBLabel("Default Provider:").apply { font = font.deriveFont(java.awt.Font.PLAIN, 11f) })
+        defaultProviderCombo.preferredSize = java.awt.Dimension(150, 24)
+        defaultProviderCombo.addActionListener {
+            // Update isDefault flags on providers
+            val selectedName = defaultProviderCombo.selectedItem as? String ?: return@addActionListener
+            val providers = settings.getProviders()
+            providers.forEach { p ->
+                val updated = p.copy(isDefault = (p.name == selectedName))
+                settings.addProvider(updated)
+            }
         }
-        tokenPanel.add(JBLabel("Max Context Tokens:").apply { font = font.deriveFont(java.awt.Font.PLAIN, 11f) })
-        tokenPanel.add(modelContextTokensField)
-        tokenPanel.add(JBLabel("Max Output Tokens:").apply { font = font.deriveFont(java.awt.Font.PLAIN, 11f) })
-        tokenPanel.add(modelOutputTokensField)
-
-        val saveModelBtn = JButton("Apply to Model").apply {
-            font = font.deriveFont(java.awt.Font.PLAIN, 11f)
-            addActionListener { applyTokenSettingsToModel() }
-        }
-        val btnWrapper = JPanel(FlowLayout(FlowLayout.LEFT, 0, 4)).apply { isOpaque = false }
-        btnWrapper.add(saveModelBtn)
-        tokenPanel.add(btnWrapper)
-
-        outer.add(tokenPanel, BorderLayout.SOUTH)
+        defaultPanel.add(defaultProviderCombo)
+        outer.add(defaultPanel, BorderLayout.SOUTH)
 
         return outer
     }
 
-    private fun buildActiveModelSection(): JComponent {
-        val outer = JPanel(BorderLayout()).apply { isOpaque = false }
+    private fun buildModelSection(): JComponent {
+        val outer = JPanel(BorderLayout(0, 4)).apply { isOpaque = false }
         outer.border = JBUI.Borders.compound(
             JBUI.Borders.customLine(JBColor.border(), 1),
-            JBUI.Borders.empty(12)
+            JBUI.Borders.empty(6)
         )
 
-        outer.add(JBLabel("Active Model").apply {
+        // Title row
+        val titleRow = JPanel(BorderLayout()).apply { isOpaque = false }
+        titleRow.add(JBLabel("Models").apply {
             font = font.deriveFont(java.awt.Font.BOLD, 13f)
-        }, BorderLayout.NORTH)
+        }, BorderLayout.WEST)
 
-        val comboPanel = JPanel(FlowLayout(FlowLayout.LEFT, 0, 4)).apply { isOpaque = false }
-        comboPanel.add(activeModelCombo)
-        outer.add(comboPanel, BorderLayout.CENTER)
+        val btnPanel = JPanel(FlowLayout(FlowLayout.RIGHT, 2, 0)).apply { isOpaque = false }
+        val syncBtn = JButton("Sync Models", AllIcons.Actions.Refresh).apply {
+            font = font.deriveFont(java.awt.Font.PLAIN, 11f)
+            toolTipText = "Fetch available models from the selected provider"
+            addActionListener { syncModelsForSelected() }
+        }
+        val testBtn = JButton("Test Connection").apply {
+            font = font.deriveFont(java.awt.Font.PLAIN, 11f)
+            addActionListener { testConnectionForSelected() }
+        }
+        val measureBtn = JButton("Measure").apply {
+            font = font.deriveFont(java.awt.Font.PLAIN, 11f)
+            toolTipText = "Measure TEE timing for all models of selected provider"
+            addActionListener { measureModelsForSelected() }
+        }
+        btnPanel.add(testBtn)
+        btnPanel.add(syncBtn)
+        btnPanel.add(measureBtn)
+        titleRow.add(btnPanel, BorderLayout.EAST)
+        outer.add(titleRow, BorderLayout.NORTH)
+
+        // Default model selector
+        val defaultModelPanel = JPanel(FlowLayout(FlowLayout.LEFT, 4, 2)).apply { isOpaque = false }
+        defaultModelPanel.add(JBLabel("Default Model:").apply { font = font.deriveFont(java.awt.Font.PLAIN, 11f) })
+        defaultModelCombo.preferredSize = java.awt.Dimension(200, 24)
+        defaultModelPanel.add(defaultModelCombo)
+        outer.add(defaultModelPanel, BorderLayout.NORTH)
+
+        // Wait, NORTH is already used by titleRow. Let me restructure.
+        // Actually BorderLayout.NORTH can only hold one component. Let me use a wrapper.
+        val northPanel = JPanel(GridLayout(0, 1, 0, 2)).apply { isOpaque = false }
+        northPanel.add(titleRow)
+        northPanel.add(defaultModelPanel)
+        outer.remove(titleRow) // remove the one we added above
+        outer.add(northPanel, BorderLayout.NORTH)
+
+        // Model table in scroll
+        val tableScroll = JBScrollPane(modelTable).apply {
+            border = JBUI.Borders.empty()
+            preferredSize = java.awt.Dimension(0, 150)
+        }
+        outer.add(tableScroll, BorderLayout.CENTER)
 
         return outer
     }
 
     private fun buildAgentParamsSection(): JComponent {
-        val outer = JPanel(GridLayout(0, 1, 4, 4)).apply {
+        val outer = JPanel(GridLayout(0, 1, 2, 2)).apply {
             isOpaque = false
             border = JBUI.Borders.compound(
                 JBUI.Borders.customLine(JBColor.border(), 1),
-                JBUI.Borders.empty(12)
+                JBUI.Borders.empty(6)
             )
         }
 
         outer.add(JBLabel("Agent Parameters").apply {
             font = font.deriveFont(java.awt.Font.BOLD, 13f)
         })
-        outer.add(JBLabel("Max Steps:").apply { font = font.deriveFont(java.awt.Font.PLAIN, 11f) })
-        outer.add(maxStepsField)
-        outer.add(JBLabel("Maximum agent reasoning steps per request (default: 25)").apply {
+        val stepsPanel = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0)).apply { isOpaque = false }
+        stepsPanel.add(JBLabel("Max Steps:").apply { font = font.deriveFont(java.awt.Font.PLAIN, 11f) })
+        maxStepsField.preferredSize = java.awt.Dimension(60, 24)
+        stepsPanel.add(maxStepsField)
+        stepsPanel.add(JBLabel("(default: 25)").apply {
             font = font.deriveFont(java.awt.Font.ITALIC, 10f)
             foreground = JBColor(0x999999, 0x666666)
         })
+        outer.add(stepsPanel)
 
         return outer
     }
 
     private fun buildButtonBar(): JComponent {
-        val panel = JPanel(FlowLayout(FlowLayout.RIGHT, 8, 8)).apply {
+        val panel = JPanel(FlowLayout(FlowLayout.RIGHT, 4, 4)).apply {
             isOpaque = false
-            border = JBUI.Borders.empty(8, 0, 0, 0)
         }
 
         val cancelBtn = JButton("Cancel").apply {
@@ -323,160 +316,361 @@ class ProviderSetupPanel(
     }
 
     // ----------------------------------------------------------------
-    // Logic
+    // Provider table logic
     // ----------------------------------------------------------------
 
-    private fun syncFieldsFromSettings() {
-        maxStepsField.text = settings.state.maxSteps.toString()
-    }
-
-    private fun refreshProviderList() {
-        providerListModel.clear()
+    private fun refreshProviderTable() {
+        providerTableModel.rowCount = 0
         for (p in settings.getProviders()) {
-            providerListModel.addElement(p)
+            providerTableModel.addRow(arrayOf(
+                p.enabled,
+                p.name,
+                p.baseUrl,
+                if (p.apiKey.isNotBlank()) "***" else ""
+            ))
         }
-        refreshActiveModelCombo()
+        // Set checkbox renderer/editor for Enabled column
+        providerTable.columnModel.getColumn(0).cellRenderer = CheckboxRenderer()
+        providerTable.columnModel.getColumn(0).cellEditor = CheckboxEditor()
+        refreshDefaultCombos()
     }
 
-    private fun refreshActiveModelCombo() {
-        activeModelCombo.removeAllItems()
-        for (p in settings.getProviders()) {
-            for (m in p.models) {
-                activeModelCombo.addItem(m)
-            }
-        }
-        // Try to select current model
-        val currentModel = settings.state.model
-        for (i in 0 until activeModelCombo.itemCount) {
-            val item = activeModelCombo.getItemAt(i)
-            if (item.id == currentModel) {
-                activeModelCombo.selectedIndex = i
-                break
-            }
-        }
-    }
-
-    private fun onProviderSelected() {
-        val provider = providerList.selectedValue ?: return
-        editingProviderId = provider.id
-        formNameField.text = provider.name
-        formUrlField.text = provider.baseUrl
-        formKeyField.text = provider.apiKey
-        formAuthCombo.selectedIndex = if (provider.authHeaderType == AuthHeaderType.X_API_KEY) 1 else 0
-        formCardLayout.show(formCardPanel, FORM_EDIT)
-
-        // Update model list
-        modelListModel.clear()
+    private fun refreshModelTable(provider: ProviderConfig) {
+        modelTableModel.rowCount = 0
         for (m in provider.models) {
-            modelListModel.addElement(m)
+            modelTableModel.addRow(arrayOf(
+                m.enabled,
+                m.name,
+                m.id,
+                m.sizeTag.displayName,
+                m.costTag.displayName,
+                m.maxContextTokens.toString(),
+                m.maxOutputTokens.toString()
+            ))
         }
+        // Set editors
+        modelTable.columnModel.getColumn(0).cellRenderer = CheckboxRenderer()
+        modelTable.columnModel.getColumn(0).cellEditor = CheckboxEditor()
+        modelTable.columnModel.getColumn(3).cellEditor = ComboBoxEditor(arrayOf("small", "medium", "large", "xl"))
+        modelTable.columnModel.getColumn(4).cellEditor = ComboBoxEditor(arrayOf("free", "low-cost", "medium-cost", "high-cost"))
     }
 
-    private fun onModelSelected() {
-        val model = modelList.selectedValue ?: return
-        modelContextTokensField.text = model.maxContextTokens.toString()
-        modelOutputTokensField.text = model.maxOutputTokens.toString()
-    }
+    private fun refreshDefaultCombos() {
+        // Default provider combo
+        val providerNames = settings.getProviders().map { it.name }
+        defaultProviderCombo.removeAllItems()
+        providerNames.forEach { defaultProviderCombo.addItem(it) }
+        val defaultProvider = settings.getProviders().find { it.isDefault }
+        if (defaultProvider != null && providerNames.contains(defaultProvider.name)) {
+            defaultProviderCombo.selectedItem = defaultProvider.name
+        } else if (providerNames.isNotEmpty()) {
+            defaultProviderCombo.selectedIndex = 0
+        }
 
-    private fun startAddProvider() {
-        editingProviderId = null
-        formNameField.text = ""
-        formUrlField.text = ""
-        formKeyField.text = ""
-        formAuthCombo.selectedIndex = 0
-        formCardLayout.show(formCardPanel, FORM_EDIT)
-        formNameField.requestFocus()
-    }
+        // Default model combo — all models from all providers as ProviderName/ModelName
+        val allModels = settings.getProviders().flatMap { p ->
+            p.models.filter { it.enabled }.map { "${p.name}/${it.name}" }
+        }
+        defaultModelCombo.removeAllItems()
+        allModels.forEach { defaultModelCombo.addItem(it) }
 
-    private fun saveProviderFromForm() {
-        val name = formNameField.text.trim()
-        val url = formUrlField.text.trim()
-        val key = String(formKeyField.password).trim()
-        if (name.isEmpty() || url.isEmpty()) return
-
-        val authType = if (formAuthCombo.selectedIndex == 1) AuthHeaderType.X_API_KEY else AuthHeaderType.BEARER
-        val id = editingProviderId ?: "prov_${System.currentTimeMillis()}"
-        val existing = settings.getProviders().find { it.id == id }
-        val provider = ProviderConfig(
-            id = id,
-            name = name,
-            baseUrl = url,
-            apiKey = key,
-            authHeaderType = authType,
-            enabled = true,
-            models = existing?.models ?: emptyList()
-        )
-        settings.addProvider(provider)
-        refreshProviderList()
-
-        // Select the saved provider
-        for (i in 0 until providerListModel.size()) {
-            if (providerListModel[i].id == id) {
-                providerList.selectedIndex = i
-                break
+        // Try to restore saved default model
+        val saved = settings.state.defaultModelDisplayName
+        if (saved.isNotBlank() && allModels.contains(saved)) {
+            defaultModelCombo.selectedItem = saved
+        } else if (allModels.isNotEmpty()) {
+            // Requirement 7: by default choose the model with best performance
+            // Best performance = largest model (XL > LARGE > MEDIUM > SMALL) with lowest latency
+            val bestModel = settings.getProviders()
+                .flatMap { p -> p.models.filter { it.enabled }.map { p to it } }
+                .maxByOrNull { (_, m) ->
+                    // Prefer larger size, then lower latency (if measured)
+                    m.sizeTag.ordinal * 1000000 + (if (m.measured && m.latencyMs > 0) (100000 - m.latencyMs.coerceAtMost(100000)).toInt() else 0)
+                }
+            if (bestModel != null) {
+                val (p, m) = bestModel
+                defaultModelCombo.selectedItem = "${p.name}/${m.name}"
             }
         }
     }
 
-    private fun cancelProviderForm() {
-        formCardLayout.show(formCardPanel, FORM_EMPTY)
-        editingProviderId = null
-        providerList.clearSelection()
+    // ----------------------------------------------------------------
+    // Add provider popup (Requirement 10)
+    // ----------------------------------------------------------------
+
+    private fun showAddProviderPopup() {
+        popupNameField.text = ""
+        popupUrlField.text = ""
+        popupKeyField.text = ""
+
+        val panel = JPanel(GridLayout(0, 1, 4, 4))
+        panel.add(JBLabel("Provider Name:"))
+        panel.add(popupNameField)
+        panel.add(JBLabel("Base URL:"))
+        panel.add(popupUrlField)
+        panel.add(JBLabel("API Key:"))
+        panel.add(popupKeyField)
+
+        val result = JOptionPane.showConfirmDialog(
+            this, panel, "Add Provider",
+            JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE
+        )
+
+        if (result == JOptionPane.OK_OPTION) {
+            val name = popupNameField.text.trim()
+            val url = popupUrlField.text.trim()
+            val key = String(popupKeyField.password).trim()
+            if (name.isNotEmpty() && url.isNotEmpty()) {
+                val id = "prov_${System.currentTimeMillis()}"
+                val provider = ProviderConfig(
+                    id = id, name = name, baseUrl = url, apiKey = key,
+                    authHeaderType = AuthHeaderType.BEARER, enabled = true,
+                    isDefault = settings.getProviders().isEmpty()
+                )
+                settings.addProvider(provider)
+                refreshProviderTable()
+
+                // Select the new provider
+                for (i in 0 until providerTableModel.rowCount) {
+                    if (providerTableModel.getValueAt(i, 1) == name) {
+                        providerTable.setRowSelectionInterval(i, i)
+                        break
+                    }
+                }
+
+                // Requirement 10: auto-start refresh models on OK
+                setStatus("Auto-syncing models for '$name'...")
+                scope.launch {
+                    try {
+                        // First test connection to auto-detect auth type
+                        val testResult = onTestConnection?.invoke(provider)
+                        val providerWithAuth = if (testResult?.success == true && testResult.authType != null) {
+                            provider.copy(authHeaderType = testResult.authType)
+                        } else {
+                            provider
+                        }
+                        val synced = onSyncModels?.invoke(providerWithAuth)
+                        SwingUtilities.invokeLater {
+                            if (synced != null) {
+                                onModelsSynced(synced)
+                                setStatus("Models synced: ${synced.models.size} found")
+                            } else {
+                                setStatus("Model sync failed")
+                            }
+                        }
+                    } catch (e: Exception) {
+                        SwingUtilities.invokeLater { setStatus("Sync error: ${e.message}") }
+                    }
+                }
+            }
+        }
     }
 
     private fun removeSelectedProvider() {
-        val provider = providerList.selectedValue ?: return
+        val row = providerTable.selectedRow
+        if (row < 0) return
+        val modelRow = providerTable.convertRowIndexToModel(row)
+        val name = providerTableModel.getValueAt(modelRow, 1)?.toString() ?: return
+        val provider = settings.getProviders().find { it.name == name } ?: return
         settings.removeProvider(provider.id)
-        refreshProviderList()
-        formCardLayout.show(formCardPanel, FORM_EMPTY)
-        modelListModel.clear()
+        refreshProviderTable()
+        modelTableModel.rowCount = 0
+        setStatus("Provider '$name' removed")
     }
 
-    private fun syncModels() {
-        val provider = providerList.selectedValue ?: return
-        // This will be handled by the parent panel via a callback
-        // For now, we just signal that sync is needed
-        onSyncModels?.invoke(provider)
-    }
+    // ----------------------------------------------------------------
+    // Test connection (Requirement 2, 3, 4)
+    // ----------------------------------------------------------------
 
-    private fun applyTokenSettingsToModel() {
-        val provider = providerList.selectedValue ?: return
-        val model = modelList.selectedValue ?: return
-        val ctx = modelContextTokensField.text.trim().toIntOrNull() ?: 32768
-        val out = modelOutputTokensField.text.trim().toIntOrNull() ?: 4096
-
-        val updatedModels = provider.models.map { m ->
-            if (m.id == model.id) m.copy(maxContextTokens = ctx, maxOutputTokens = out) else m
+    private fun testConnectionForSelected() {
+        val provider = getSelectedProvider() ?: run {
+            setStatus("Select a provider first")
+            return
         }
-        val updatedProvider = provider.copy(models = updatedModels)
-        settings.addProvider(updatedProvider)
-        refreshProviderList()
+        setStatus("Testing connection to '${provider.name}'...")
+        scope.launch {
+            val result = onTestConnection?.invoke(provider)
+            SwingUtilities.invokeLater {
+                if (result?.success == true && result.authType != null) {
+                    // Auto-set auth type (Requirement 3)
+                    val updated = provider.copy(authHeaderType = result.authType)
+                    settings.addProvider(updated)
+                    setStatus("Connection OK (${result.latencyMs}ms), auth: ${result.authType}")
 
-        // Reselect
-        for (i in 0 until providerListModel.size()) {
-            if (providerListModel[i].id == provider.id) {
-                providerList.selectedIndex = i
-                break
+                    // Requirement 4: auto-fetch models after successful test
+                    syncModelsForProvider(updated)
+                } else {
+                    setStatus("Connection failed: ${result?.message ?: "unknown error"}")
+                }
             }
         }
     }
+
+    // ----------------------------------------------------------------
+    // Sync models
+    // ----------------------------------------------------------------
+
+    private fun syncModelsForSelected() {
+        val provider = getSelectedProvider() ?: run {
+            setStatus("Select a provider first")
+            return
+        }
+        syncModelsForProvider(provider)
+    }
+
+    private fun syncModelsForProvider(provider: ProviderConfig) {
+        setStatus("Syncing models for '${provider.name}'...")
+        scope.launch {
+            try {
+                val synced = onSyncModels?.invoke(provider)
+                SwingUtilities.invokeLater {
+                    if (synced != null) {
+                        onModelsSynced(synced)
+                        setStatus("Synced ${synced.models.size} models from '${provider.name}'")
+                    } else {
+                        setStatus("Sync failed")
+                    }
+                }
+            } catch (e: Exception) {
+                SwingUtilities.invokeLater { setStatus("Sync error: ${e.message}") }
+            }
+        }
+    }
+
+    // ----------------------------------------------------------------
+    // Measure (Requirement 2)
+    // ----------------------------------------------------------------
+
+    private fun measureModelsForSelected() {
+        val provider = getSelectedProvider() ?: run {
+            setStatus("Select a provider first")
+            return
+        }
+        if (provider.models.isEmpty()) {
+            setStatus("No models to measure. Sync first.")
+            return
+        }
+        setStatus("Measuring ${provider.models.size} models...")
+        scope.launch {
+            try {
+                val results = onMeasureModels?.invoke(provider)
+                SwingUtilities.invokeLater {
+                    if (results != null) {
+                        // Update models with measurement results
+                        val updatedModels = provider.models.map { m ->
+                            val latency = results[m.id] ?: 0L
+                            // Requirement 2: if measured as failed (0ms), mark as disabled
+                            m.copy(
+                                measured = true,
+                                latencyMs = latency,
+                                enabled = if (latency == 0L) false else m.enabled
+                            )
+                        }
+                        val updatedProvider = provider.copy(models = updatedModels)
+                        settings.addProvider(updatedProvider)
+                        refreshProviderTable()
+                        // Reselect
+                        for (i in 0 until providerTableModel.rowCount) {
+                            if (providerTableModel.getValueAt(i, 1) == provider.name) {
+                                providerTable.setRowSelectionInterval(i, i)
+                                break
+                            }
+                        }
+                        refreshModelTable(updatedProvider)
+                        val okCount = results.count { it.value > 0 }
+                        val failCount = results.count { it.value == 0L }
+                        setStatus("Measured: $okCount OK, $failCount failed/disabled")
+                    }
+                }
+            } catch (e: Exception) {
+                SwingUtilities.invokeLater { setStatus("Measure error: ${e.message}") }
+            }
+        }
+    }
+
+    // ----------------------------------------------------------------
+    // Save all (Requirement 8)
+    // ----------------------------------------------------------------
 
     private fun saveAll() {
         // Save max steps
         settings.state.maxSteps = maxStepsField.text.trim().toIntOrNull() ?: 25
 
-        // Set active model from combo
-        val activeModel = activeModelCombo.selectedItem as? ModelInfo
-        if (activeModel != null) {
-            settings.state.model = activeModel.id
-            settings.state.maxContextTokens = activeModel.maxContextTokens
-            settings.state.maxOutputTokens = activeModel.maxOutputTokens
+        // Save provider enabled states from table
+        val providers = settings.getProviders().toMutableList()
+        for (i in 0 until providerTableModel.rowCount) {
+            val name = providerTableModel.getValueAt(i, 1)?.toString() ?: continue
+            val enabled = providerTableModel.getValueAt(i, 0) as? Boolean ?: true
+            val idx = providers.indexOfFirst { it.name == name }
+            if (idx >= 0) {
+                providers[idx] = providers[idx].copy(enabled = enabled)
+            }
+        }
 
-            // Find the provider for this model and set baseUrl/apiKey
-            val provider = settings.getProviders().find { p -> p.models.any { it.id == activeModel.id } }
-            if (provider != null) {
-                settings.state.baseUrl = provider.baseUrl
-                settings.setApiKey(provider.apiKey)
+        // Save model edits from model table for the selected provider
+        val selectedProvider = getSelectedProvider()
+        if (selectedProvider != null) {
+            val updatedModels = mutableListOf<ModelInfo>()
+            for (i in 0 until modelTableModel.rowCount) {
+                val enabled = modelTableModel.getValueAt(i, 0) as? Boolean ?: true
+                val name = modelTableModel.getValueAt(i, 1)?.toString() ?: ""
+                val id = modelTableModel.getValueAt(i, 2)?.toString() ?: ""
+                val typeStr = modelTableModel.getValueAt(i, 3)?.toString() ?: "medium"
+                val costStr = modelTableModel.getValueAt(i, 4)?.toString() ?: "low-cost"
+                val ctx = modelTableModel.getValueAt(i, 5)?.toString()?.toIntOrNull() ?: 32768
+                val out = modelTableModel.getValueAt(i, 6)?.toString()?.toIntOrNull() ?: 4096
+
+                val size = parseSize(typeStr)
+                val cost = parseCost(costStr)
+
+                // Find existing model to preserve measured/latency
+                val existing = selectedProvider.models.find { it.id == id }
+                updatedModels.add(ModelInfo(
+                    id = id,
+                    providerId = selectedProvider.id,
+                    providerName = selectedProvider.name,
+                    name = name,
+                    sizeTag = size,
+                    costTag = cost,
+                    maxContextTokens = ctx,
+                    maxOutputTokens = out,
+                    enabled = enabled,
+                    measured = existing?.measured ?: false,
+                    latencyMs = existing?.latencyMs ?: 0
+                ))
+            }
+            val idx = providers.indexOfFirst { it.id == selectedProvider.id }
+            if (idx >= 0) {
+                providers[idx] = providers[idx].copy(models = updatedModels)
+            }
+        }
+
+        // Save default provider
+        val defaultProviderName = defaultProviderCombo.selectedItem as? String
+        providers.forEach { p ->
+            providers[providers.indexOfFirst { it.id == p.id }] = p.copy(isDefault = (p.name == defaultProviderName))
+        }
+        settings.setProviders(providers)
+
+        // Save default model (Requirement 8: ProviderName/ModelName)
+        val defaultModel = defaultModelCombo.selectedItem as? String
+        if (defaultModel != null) {
+            settings.state.defaultModelDisplayName = defaultModel
+            // Also set the legacy model field to the model ID for backward compat
+            val parts = defaultModel.split("/", limit = 2)
+            if (parts.size == 2) {
+                val provName = parts[0]
+                val modelName = parts[1]
+                val provider = providers.find { it.name == provName }
+                val model = provider?.models?.find { it.name == modelName }
+                if (model != null && provider != null) {
+                    settings.state.model = model.id
+                    settings.state.baseUrl = provider.baseUrl
+                    settings.setApiKey(provider.apiKey)
+                    settings.state.maxContextTokens = model.maxContextTokens
+                    settings.state.maxOutputTokens = model.maxOutputTokens
+                    settings.state.defaultProviderId = provider.id
+                }
             }
         }
 
@@ -484,67 +678,111 @@ class ProviderSetupPanel(
     }
 
     // ----------------------------------------------------------------
-    // Callback for model sync (set by parent)
+    // Helpers
     // ----------------------------------------------------------------
 
-    var onSyncModels: ((ProviderConfig) -> Unit)? = null
+    private fun getSelectedProvider(): ProviderConfig? {
+        val row = providerTable.selectedRow
+        if (row < 0) return null
+        val modelRow = providerTable.convertRowIndexToModel(row)
+        val name = providerTableModel.getValueAt(modelRow, 1)?.toString() ?: return null
+        return settings.getProviders().find { it.name == name }
+    }
+
+    private fun syncFieldsFromSettings() {
+        maxStepsField.text = settings.state.maxSteps.toString()
+    }
+
+    private fun setStatus(msg: String) {
+        SwingUtilities.invokeLater { statusLabel.text = msg }
+    }
+
+    private fun parseSize(s: String): ModelSize = when (s.lowercase()) {
+        "small" -> ModelSize.SMALL
+        "medium" -> ModelSize.MEDIUM
+        "large" -> ModelSize.LARGE
+        "xl" -> ModelSize.XL
+        else -> ModelSize.MEDIUM
+    }
+
+    private fun parseCost(s: String): ModelCost = when (s.lowercase()) {
+        "free" -> ModelCost.FREE
+        "low-cost", "low_cost" -> ModelCost.LOW_COST
+        "medium-cost", "medium_cost" -> ModelCost.MEDIUM_COST
+        "high-cost", "high_cost" -> ModelCost.HIGH_COST
+        else -> ModelCost.LOW_COST
+    }
+
+    // ----------------------------------------------------------------
+    // Callbacks (set by parent ChatToolWindowPanel)
+    // ----------------------------------------------------------------
+
+    var onSyncModels: (suspend (ProviderConfig) -> ProviderConfig?)? = null
+    var onTestConnection: (suspend (ProviderConfig) -> ProviderManager.ConnectionTestResult?)? = null
+    var onMeasureModels: (suspend (ProviderConfig) -> Map<String, Long>?)? = null
 
     /**
      * Called by parent after model sync completes — refreshes the UI.
      */
     fun onModelsSynced(provider: ProviderConfig) {
-        refreshProviderList()
-        for (i in 0 until providerListModel.size()) {
-            if (providerListModel[i].id == provider.id) {
-                providerList.selectedIndex = i
+        refreshProviderTable()
+        // Reselect the provider
+        for (i in 0 until providerTableModel.rowCount) {
+            if (providerTableModel.getValueAt(i, 1)?.toString() == provider.name) {
+                providerTable.setRowSelectionInterval(i, i)
                 break
             }
         }
+        refreshModelTable(provider)
+        refreshDefaultCombos()
+    }
+
+    /**
+     * Get all models from all enabled providers as ProviderName/ModelName (Requirement 9).
+     */
+    fun getAllModelDisplayNames(): List<String> {
+        return settings.getProviders()
+            .filter { it.enabled }
+            .flatMap { p -> p.models.filter { it.enabled }.map { "${p.name}/${it.name}" } }
     }
 
     // ----------------------------------------------------------------
-    // Cell renderers
+    // Cell renderers and editors
     // ----------------------------------------------------------------
 
-    private class ProviderListCellRenderer : ListCellRenderer<ProviderConfig> {
-        override fun getListCellRendererComponent(
-            list: JList<out ProviderConfig>?,
-            value: ProviderConfig?,
-            index: Int,
-            isSelected: Boolean,
-            cellHasFocus: Boolean
+    private class CheckboxRenderer : JCheckBox(), TableCellRenderer {
+        override fun getTableCellRendererComponent(
+            table: JTable?, value: Any?, isSelected: Boolean, hasFocus: Boolean, row: Int, col: Int
         ): java.awt.Component {
-            val label = JBLabel(value?.let { "${it.name}  |  ${it.baseUrl}  |  ${it.models.size} models" } ?: "")
-            label.border = JBUI.Borders.empty(4, 8)
-            if (isSelected) {
-                label.background = JBColor(0xE8EAF0, 0x2A2D30)
-                label.isOpaque = true
-            } else {
-                label.isOpaque = false
-            }
-            return label
+            horizontalAlignment = SwingConstants.CENTER
+            this.isSelected = value as? Boolean ?: false
+            return this
         }
     }
 
-    private class ModelListCellRenderer : ListCellRenderer<ModelInfo> {
-        override fun getListCellRendererComponent(
-            list: JList<out ModelInfo>?,
-            value: ModelInfo?,
-            index: Int,
-            isSelected: Boolean,
-            cellHasFocus: Boolean
-        ): java.awt.Component {
-            val label = JBLabel(value?.let {
-                "${it.id}  |  ctx: ${it.maxContextTokens}  |  out: ${it.maxOutputTokens}"
-            } ?: "")
-            label.border = JBUI.Borders.empty(4, 8)
-            if (isSelected) {
-                label.background = JBColor(0xE8EAF0, 0x2A2D30)
-                label.isOpaque = true
-            } else {
-                label.isOpaque = false
-            }
-            return label
+    private class CheckboxEditor : AbstractCellEditor(), TableCellEditor {
+        private val checkbox = JCheckBox()
+        init {
+            checkbox.horizontalAlignment = SwingConstants.CENTER
+            checkbox.addActionListener { fireEditingStopped() }
         }
+        override fun getTableCellEditorComponent(
+            table: JTable?, value: Any?, isSelected: Boolean, row: Int, col: Int
+        ): java.awt.Component {
+            checkbox.isSelected = value as? Boolean ?: false
+            return checkbox
+        }
+        override fun getCellEditorValue(): Any = checkbox.isSelected
+    }
+
+    private class ComboBoxEditor(items: Array<String>) : AbstractCellEditor(), TableCellEditor {
+        private val combo = JComboBox(items)
+        override fun getTableCellEditorComponent(
+            table: JTable?, value: Any?, isSelected: Boolean, row: Int, col: Int
+        ): java.awt.Component {
+            combo.selectedItem = value
+            return combo
+        }
+        override fun getCellEditorValue(): Any = combo.selectedItem ?: ""
     }
 }

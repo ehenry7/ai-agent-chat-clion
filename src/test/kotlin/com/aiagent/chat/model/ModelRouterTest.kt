@@ -6,16 +6,16 @@ import org.junit.Test
 class ModelRouterTest {
 
     private val testModels = listOf(
-        ModelInfo("gpt-4o-mini", "p1", "OpenAI", ModelSize.SMALL, ModelCost.LOW_COST),
-        ModelInfo("gpt-4o", "p1", "OpenAI", ModelSize.LARGE, ModelCost.HIGH_COST),
-        ModelInfo("o1-preview", "p1", "OpenAI", ModelSize.XL, ModelCost.HIGH_COST),
-        ModelInfo("claude-3-haiku", "p2", "Anthropic", ModelSize.SMALL, ModelCost.LOW_COST),
-        ModelInfo("claude-3-5-sonnet", "p2", "Anthropic", ModelSize.LARGE, ModelCost.MEDIUM_COST),
-        ModelInfo("claude-3-opus", "p2", "Anthropic", ModelSize.XL, ModelCost.HIGH_COST),
-        ModelInfo("glm-4-flash", "p3", "Zhipu", ModelSize.SMALL, ModelCost.FREE),
-        ModelInfo("deepseek-v3", "p4", "DeepSeek", ModelSize.LARGE, ModelCost.LOW_COST),
-        ModelInfo("deepseek-r1", "p4", "DeepSeek", ModelSize.XL, ModelCost.MEDIUM_COST),
-        ModelInfo("llama-3.1-8b", "p5", "Meta", ModelSize.SMALL, ModelCost.FREE)
+        ModelInfo("gpt-4o-mini", "p1", "OpenAI", sizeTag = ModelSize.SMALL, costTag = ModelCost.LOW_COST),
+        ModelInfo("gpt-4o", "p1", "OpenAI", sizeTag = ModelSize.LARGE, costTag = ModelCost.HIGH_COST),
+        ModelInfo("o1-preview", "p1", "OpenAI", sizeTag = ModelSize.XL, costTag = ModelCost.HIGH_COST),
+        ModelInfo("claude-3-haiku", "p2", "Anthropic", sizeTag = ModelSize.SMALL, costTag = ModelCost.LOW_COST),
+        ModelInfo("claude-3-5-sonnet", "p2", "Anthropic", sizeTag = ModelSize.LARGE, costTag = ModelCost.MEDIUM_COST),
+        ModelInfo("claude-3-opus", "p2", "Anthropic", sizeTag = ModelSize.XL, costTag = ModelCost.HIGH_COST),
+        ModelInfo("glm-4-flash", "p3", "Zhipu", sizeTag = ModelSize.SMALL, costTag = ModelCost.FREE),
+        ModelInfo("deepseek-v3", "p4", "DeepSeek", sizeTag = ModelSize.LARGE, costTag = ModelCost.LOW_COST),
+        ModelInfo("deepseek-r1", "p4", "DeepSeek", sizeTag = ModelSize.XL, costTag = ModelCost.MEDIUM_COST),
+        ModelInfo("llama-3.1-8b", "p5", "Meta", sizeTag = ModelSize.SMALL, costTag = ModelCost.FREE)
     )
 
     @Test
@@ -68,7 +68,7 @@ class ModelRouterTest {
     @Test
     fun `selectModel routes MEDIUM task to medium low_cost model`() {
         // Add a medium model to the pool
-        val modelsWithMedium = testModels + ModelInfo("mistral-medium", "p6", "Mistral", ModelSize.MEDIUM, ModelCost.LOW_COST)
+        val modelsWithMedium = testModels + ModelInfo("mistral-medium", "p6", "Mistral", sizeTag = ModelSize.MEDIUM, costTag = ModelCost.LOW_COST)
         val model = ModelRouter.selectModel(TaskComplexity.MEDIUM, modelsWithMedium)
         assertNotNull(model)
         assertEquals(ModelSize.MEDIUM, model!!.sizeTag)
@@ -97,8 +97,8 @@ class ModelRouterTest {
     @Test
     fun `selectModel falls back to largest available when no exact match`() {
         val onlySmall = listOf(
-            ModelInfo("mini-1", "p1", "P1", ModelSize.SMALL, ModelCost.FREE),
-            ModelInfo("mini-2", "p1", "P1", ModelSize.SMALL, ModelCost.LOW_COST)
+            ModelInfo("mini-1", "p1", "P1", sizeTag = ModelSize.SMALL, costTag = ModelCost.FREE),
+            ModelInfo("mini-2", "p1", "P1", sizeTag = ModelSize.SMALL, costTag = ModelCost.LOW_COST)
         )
         val model = ModelRouter.selectModel(TaskComplexity.XL_TASK, onlySmall)
         assertNotNull(model)

@@ -71,14 +71,14 @@ class ProviderConfigTest {
 
     @Test
     fun `ModelInfo displayName returns id when providerName is blank`() {
-        val info = ModelInfo("gpt-4", "p1", "", ModelSize.LARGE, ModelCost.HIGH_COST)
+        val info = ModelInfo("gpt-4", "p1", "", sizeTag = ModelSize.LARGE, costTag = ModelCost.HIGH_COST)
         assertEquals("gpt-4", info.displayName)
     }
 
     @Test
     fun `ModelInfo displayName returns id with providerName when not blank`() {
-        val info = ModelInfo("gpt-4", "p1", "OpenAI", ModelSize.LARGE, ModelCost.HIGH_COST)
-        assertEquals("gpt-4 (OpenAI)", info.displayName)
+        val info = ModelInfo("gpt-4", "p1", "OpenAI", sizeTag = ModelSize.LARGE, costTag = ModelCost.HIGH_COST)
+        assertEquals("OpenAI/gpt-4", info.displayName)
     }
 
     @Test
@@ -135,8 +135,8 @@ class ProviderConfigTest {
             id = "p1", name = "TestProvider", baseUrl = "http://localhost:8080",
             apiKey = "secret-key", authHeaderType = AuthHeaderType.X_API_KEY,
             models = listOf(
-                ModelInfo("model-a", "p1", "TestProvider", ModelSize.SMALL, ModelCost.FREE),
-                ModelInfo("model-b", "p1", "TestProvider", ModelSize.LARGE, ModelCost.HIGH_COST)
+                ModelInfo("model-a", "p1", "TestProvider", sizeTag = ModelSize.SMALL, costTag = ModelCost.FREE),
+                ModelInfo("model-b", "p1", "TestProvider", sizeTag = ModelSize.LARGE, costTag = ModelCost.HIGH_COST)
             )
         )
         val json = kotlinx.serialization.json.Json.encodeToString(ProviderConfig.serializer(), provider)

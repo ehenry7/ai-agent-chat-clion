@@ -15,7 +15,7 @@ class ChatStateService : PersistentStateComponent<ChatStateService.State> {
 
     class State {
         var baseUrl: String = "http://techdev.hicomputing.huawei.com:18000"
-        var model: String = "GLM-5.2-1"
+        var model: String = ""
         var maxSteps: Int = 25
         var apiKey: String = ""
         var approvalMode: String = ApprovalMode.BALANCED.name
@@ -29,6 +29,10 @@ class ChatStateService : PersistentStateComponent<ChatStateService.State> {
         var multiProviderEnabled: Boolean = false
         /** Whether dynamic model routing is enabled. */
         var dynamicRoutingEnabled: Boolean = false
+        /** ID of the default provider (used first). */
+        var defaultProviderId: String = ""
+        /** Full display name of the default model (ProviderName/ModelName). */
+        var defaultModelDisplayName: String = ""
     }
 
     private var myState = State()

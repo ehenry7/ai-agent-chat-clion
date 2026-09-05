@@ -24,8 +24,8 @@ class ProviderManagerTest {
     fun `addProviderOffline populates allModels from provider models`() {
         val pm = ProviderManager()
         val models = listOf(
-            ModelInfo("model-a", "p1", "TestProvider", ModelSize.SMALL, ModelCost.FREE),
-            ModelInfo("model-b", "p1", "TestProvider", ModelSize.LARGE, ModelCost.HIGH_COST)
+            ModelInfo("model-a", "p1", "TestProvider", sizeTag = ModelSize.SMALL, costTag = ModelCost.FREE),
+            ModelInfo("model-b", "p1", "TestProvider", sizeTag = ModelSize.LARGE, costTag = ModelCost.HIGH_COST)
         )
         val provider = ProviderConfig("p1", "TestProvider", "http://localhost:8080", "key", AuthHeaderType.BEARER, models = models)
         pm.addProviderOffline(provider)
@@ -35,7 +35,7 @@ class ProviderManagerTest {
     @Test
     fun `removeProvider removes provider and its models`() {
         val pm = ProviderManager()
-        val models = listOf(ModelInfo("model-a", "p1", "TestProvider", ModelSize.SMALL, ModelCost.FREE))
+        val models = listOf(ModelInfo("model-a", "p1", "TestProvider", sizeTag = ModelSize.SMALL, costTag = ModelCost.FREE))
         val provider = ProviderConfig("p1", "TestProvider", "http://localhost:8080", "key", AuthHeaderType.BEARER, models = models)
         pm.addProviderOffline(provider)
         assertEquals(1, pm.providers.size)
@@ -73,7 +73,7 @@ class ProviderManagerTest {
     @Test
     fun `findProviderForModel returns correct provider`() {
         val pm = ProviderManager()
-        val models = listOf(ModelInfo("model-a", "p1", "TestProvider", ModelSize.SMALL, ModelCost.FREE))
+        val models = listOf(ModelInfo("model-a", "p1", "TestProvider", sizeTag = ModelSize.SMALL, costTag = ModelCost.FREE))
         val provider = ProviderConfig("p1", "TestProvider", "http://localhost:8080", "key", AuthHeaderType.BEARER, models = models)
         pm.addProviderOffline(provider)
 
@@ -88,8 +88,8 @@ class ProviderManagerTest {
     fun `findModel returns ModelInfo by id`() {
         val pm = ProviderManager()
         val models = listOf(
-            ModelInfo("model-a", "p1", "TestProvider", ModelSize.SMALL, ModelCost.FREE),
-            ModelInfo("model-b", "p1", "TestProvider", ModelSize.LARGE, ModelCost.HIGH_COST)
+            ModelInfo("model-a", "p1", "TestProvider", sizeTag = ModelSize.SMALL, costTag = ModelCost.FREE),
+            ModelInfo("model-b", "p1", "TestProvider", sizeTag = ModelSize.LARGE, costTag = ModelCost.HIGH_COST)
         )
         val provider = ProviderConfig("p1", "TestProvider", "http://localhost:8080", "key", AuthHeaderType.BEARER, models = models)
         pm.addProviderOffline(provider)
@@ -105,9 +105,9 @@ class ProviderManagerTest {
     fun `clear removes all providers and models`() {
         val pm = ProviderManager()
         pm.addProviderOffline(ProviderConfig("p1", "P1", "http://localhost", "key", AuthHeaderType.BEARER,
-            models = listOf(ModelInfo("m1", "p1", "P1", ModelSize.SMALL, ModelCost.FREE))))
+            models = listOf(ModelInfo("m1", "p1", "P1", sizeTag = ModelSize.SMALL, costTag = ModelCost.FREE))))
         pm.addProviderOffline(ProviderConfig("p2", "P2", "http://localhost", "key", AuthHeaderType.BEARER,
-            models = listOf(ModelInfo("m2", "p2", "P2", ModelSize.LARGE, ModelCost.HIGH_COST))))
+            models = listOf(ModelInfo("m2", "p2", "P2", sizeTag = ModelSize.LARGE, costTag = ModelCost.HIGH_COST))))
 
         assertEquals(2, pm.providers.size)
         assertEquals(2, pm.allModels.size)
@@ -127,8 +127,8 @@ class ProviderManagerTest {
     fun `toSystemPromptSection includes model metadata`() {
         val pm = ProviderManager()
         val models = listOf(
-            ModelInfo("gpt-4o-mini", "p1", "OpenAI", ModelSize.SMALL, ModelCost.LOW_COST),
-            ModelInfo("o1-preview", "p1", "OpenAI", ModelSize.XL, ModelCost.HIGH_COST)
+            ModelInfo("gpt-4o-mini", "p1", "OpenAI", sizeTag = ModelSize.SMALL, costTag = ModelCost.LOW_COST),
+            ModelInfo("o1-preview", "p1", "OpenAI", sizeTag = ModelSize.XL, costTag = ModelCost.HIGH_COST)
         )
         pm.addProviderOffline(ProviderConfig("p1", "OpenAI", "http://localhost", "key", AuthHeaderType.BEARER, models = models))
 
@@ -149,9 +149,9 @@ class ProviderManagerTest {
     fun `toSystemPromptSection groups models by provider`() {
         val pm = ProviderManager()
         pm.addProviderOffline(ProviderConfig("p1", "OpenAI", "http://openai", "key", AuthHeaderType.BEARER,
-            models = listOf(ModelInfo("gpt-4o", "p1", "OpenAI", ModelSize.LARGE, ModelCost.HIGH_COST))))
+            models = listOf(ModelInfo("gpt-4o", "p1", "OpenAI", sizeTag = ModelSize.LARGE, costTag = ModelCost.HIGH_COST))))
         pm.addProviderOffline(ProviderConfig("p2", "Anthropic", "http://anthropic", "key", AuthHeaderType.X_API_KEY,
-            models = listOf(ModelInfo("claude-3-opus", "p2", "Anthropic", ModelSize.XL, ModelCost.HIGH_COST))))
+            models = listOf(ModelInfo("claude-3-opus", "p2", "Anthropic", sizeTag = ModelSize.XL, costTag = ModelCost.HIGH_COST))))
 
         val section = pm.toSystemPromptSection()
         assertTrue(section.contains("Provider: OpenAI"))
@@ -164,10 +164,10 @@ class ProviderManagerTest {
     fun `multiple providers contribute to allModels`() {
         val pm = ProviderManager()
         pm.addProviderOffline(ProviderConfig("p1", "P1", "http://p1", "key", AuthHeaderType.BEARER,
-            models = listOf(ModelInfo("m1", "p1", "P1", ModelSize.SMALL, ModelCost.FREE))))
+            models = listOf(ModelInfo("m1", "p1", "P1", sizeTag = ModelSize.SMALL, costTag = ModelCost.FREE))))
         pm.addProviderOffline(ProviderConfig("p2", "P2", "http://p2", "key", AuthHeaderType.X_API_KEY,
-            models = listOf(ModelInfo("m2", "p2", "P2", ModelSize.LARGE, ModelCost.HIGH_COST),
-                   ModelInfo("m3", "p2", "P2", ModelSize.XL, ModelCost.HIGH_COST))))
+            models = listOf(ModelInfo("m2", "p2", "P2", sizeTag = ModelSize.LARGE, costTag = ModelCost.HIGH_COST),
+                   ModelInfo("m3", "p2", "P2", sizeTag = ModelSize.XL, costTag = ModelCost.HIGH_COST))))
 
         assertEquals(3, pm.allModels.size)
     }

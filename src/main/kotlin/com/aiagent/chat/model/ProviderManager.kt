@@ -99,6 +99,113 @@ class ProviderManager {
     fun findModel(modelId: String): ModelInfo? = _allModels.find { it.id == modelId }
 
     /**
+     * Result of a connection test.
+     */
+    data class ConnectionTestResult(
+        val success: Boolean,
+        val authType: AuthHeaderType? = null,
+        val message: String = "",
+        val latencyMs: Long = 0
+    )
+
+    /**
+     * Test connectivity to a provider's API.
+     * Tries both Bearer and x-api-key auth types, returns the one that works.
+     * Also measures the latency of the request.
+     */
+    suspend fun testConnection(provider: ProviderConfig): ConnectionTestResult {
+        DebugLog.info("ProviderManager", "Testing connection to '${provider.name}' at ${provider.baseUrl}")
+
+        val endpoints = listOf(
+            "${provider.baseUrl.trimEnd('/')}/models",
+            "${provider.baseUrl.trimEnd('/')}/v1/models"
+        )
+
+        // Try both auth types on each endpoint
+        for (authType in listOf(AuthHeaderType.BEARER, AuthHeaderType.X_API_KEY)) {
+            val headers = when (authType) {
+                AuthHeaderType.BEARER -> mapOf("Authorization" to "Bearer ${provider.apiKey}")
+                AuthHeaderType.X_API_KEY -> mapOf("x-api-key" to provider.apiKey)
+            }
+
+            for (endpoint in endpoints) {
+                try {
+                    val startTime = System.currentTimeMillis()
+                    val request = HttpRequest.newBuilder()
+                        .uri(URI.create(endpoint))
+                        .timeout(Duration.ofSeconds(15))
+                        .apply { headers.forEach { (k, v) -> header(k, v) } }
+                        .GET()
+                        .build()
+
+                    val response = httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString()).await()
+                    val latency = System.currentTimeMillis() - startTime
+
+                    if (response.statusCode() in 200..299) {
+                        DebugLog.info("ProviderManager", "Connection test succeeded with $authType at $endpoint (${latency}ms)")
+                        return ConnectionTestResult(
+                            success = true,
+                            authType = authType,
+                            message = "OK (${latency}ms)",
+                            latencyMs = latency
+                        )
+                    }
+                    DebugLog.warn("ProviderManager", "Endpoint $endpoint with $authType returned ${response.statusCode()}")
+                } catch (e: Exception) {
+                    DebugLog.warn("ProviderManager", "Endpoint $endpoint with $authType failed: ${e.message}")
+                }
+            }
+        }
+
+        return ConnectionTestResult(
+            success = false,
+            authType = null,
+            message = "Connection failed - check URL and API key"
+        )
+    }
+
+    /**
+     * Measure the TEE (Time-to-First-Entity) timing of a simple chat request.
+     * Sends a minimal "Hello" request and measures the round-trip latency.
+     * Returns the latency in milliseconds, or 0 if the request failed.
+     */
+    suspend fun measureModel(provider: ProviderConfig, modelId: String): Long {
+        DebugLog.info("ProviderManager", "Measuring model '$modelId' on '${provider.name}'")
+
+        val endpoint = "${provider.baseUrl.trimEnd('/')}/chat/completions"
+        val authHeaders = provider.toApiHeaders()
+
+        val requestBody = """
+            {"model":"$modelId","messages":[{"role":"user","content":"Hi"}],"max_tokens":5}
+        """.trimIndent()
+
+        return try {
+            val startTime = System.currentTimeMillis()
+            val request = HttpRequest.newBuilder()
+                .uri(URI.create(endpoint))
+                .timeout(Duration.ofSeconds(30))
+                .header("Content-Type", "application/json")
+                .apply { authHeaders.forEach { (k, v) -> header(k, v) } }
+                .POST(HttpRequest.BodyPublishers.ofString(requestBody))
+                .build()
+
+            val response = httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString()).await()
+            val latency = System.currentTimeMillis() - startTime
+
+            if (response.statusCode() in 200..299) {
+                DebugLog.info("ProviderManager", "Measure succeeded for '$modelId': ${latency}ms")
+                latency
+            } else {
+                DebugLog.warn("ProviderManager", "Measure failed for '$modelId': HTTP ${response.statusCode()}")
+                0L
+            }
+        } catch (e: Exception) {
+            DebugLog.error("ProviderManager", "Measure failed for '$modelId': ${e.message}")
+            0L
+        }
+    }
+
+    /**
      * Sync models from a provider's API.
      * Tries GET /models first, then GET /v1/models as fallback.
      * Uses the provider's auth header type (Bearer or x-api-key).

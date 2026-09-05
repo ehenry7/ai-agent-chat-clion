@@ -4,13 +4,42 @@ package com.aiagent.chat.model
  * Dynamic task router that analyzes incoming task complexity
  * and selects the optimal model based on size and cost tags.
  *
- * Routing strategy:
- * - SIMPLE  -> small/free or small/low_cost models
- * - MEDIUM  -> medium/low_cost or medium/medium_cost models
- * - COMPLEX -> large/medium_cost or large/high_cost models
- * - XL_TASK -> xl/high_cost models (deep reasoning)
+ * ====================================================================
+ *  ROUTING STRATEGY (Requirement 13: type-based model selection)
+ * ====================================================================
  *
- * Falls back to the largest available model if no exact match is found.
+ *  The agent uses the model's TYPE (size tag) to decide which model
+ *  should be used for each task. The routing logic is:
+ *
+ *  SMALL  — Quick, cheap tasks:
+ *    Formatting, listing, simple edits, renaming, imports, typos,
+ *    sorting, counting, grep/search. These are fast and don't need
+ *    deep reasoning. Use small/free or small/low-cost models.
+ *
+ *  MEDIUM — Standard development tasks:
+ *    Writing tests, explaining code, bug fixes, documentation,
+ *    type hints, code review, summarization. These need moderate
+ *    reasoning but not extensive context. Use medium/low-cost or
+ *    medium/medium-cost models.
+ *
+ *  LARGE — Complex development tasks:
+ *    Refactoring, multi-file changes, new features, API design,
+ *    database schema, concurrency, integration. These need strong
+ *    reasoning and larger context windows. Use large/medium-cost
+ *    or large/high-cost models.
+ *
+ *  XL — Deep reasoning tasks:
+ *    System design, architecture, comprehensive reviews, complex
+ *    debugging, full rewrites, migrations, security/performance
+ *    audits. These need the most powerful models available.
+ *    Use XL/high-cost models.
+ *
+ *  The router also respects the "enabled" flag on models — disabled
+ *  models (e.g. failed measurement) are never selected.
+ *
+ *  Falls back to the largest available enabled model if no exact
+ *  match is found.
+ * ====================================================================
  */
 object ModelRouter {
 
@@ -69,13 +98,16 @@ object ModelRouter {
 
     /**
      * Select the optimal model for a given task complexity from the available model pool.
+     * Only considers enabled models (disabled/failed-measurement models are excluded).
      *
      * @param complexity The analyzed task complexity
      * @param availableModels All categorized models across all providers
      * @return The best matching ModelInfo, or null if no models available
      */
     fun selectModel(complexity: TaskComplexity, availableModels: List<ModelInfo>): ModelInfo? {
-        if (availableModels.isEmpty()) return null
+        // Filter to only enabled models
+        val enabledModels = availableModels.filter { it.enabled }
+        if (enabledModels.isEmpty()) return null
 
         // Define preferred (size, cost) pairs for each complexity level, in priority order
         val preferenceChain: List<Pair<ModelSize, ModelCost?>> = when (complexity) {
@@ -111,15 +143,15 @@ object ModelRouter {
 
         // Try each preference in order
         for ((preferredSize, preferredCost) in preferenceChain) {
-            val match = availableModels.firstOrNull { model ->
+            val match = enabledModels.firstOrNull { model ->
                 model.sizeTag == preferredSize &&
                 (preferredCost == null || model.costTag == preferredCost)
             }
             if (match != null) return match
         }
 
-        // Fallback: return the largest model available
-        return availableModels.maxByOrNull { it.sizeTag.ordinal }
+        // Fallback: return the largest enabled model available
+        return enabledModels.maxByOrNull { it.sizeTag.ordinal }
     }
 
     /**

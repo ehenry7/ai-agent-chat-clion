@@ -86,7 +86,7 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
 
     private val statusLabel = JBLabel("Ready")
 
-    // --- Provider-only setup panel (replaces old standalone fields) ---
+    // --- Provider-only setup panel v2 ---
     private val providerSetupPanel = ProviderSetupPanel(
         settings = settings,
         onSave = {
@@ -99,17 +99,11 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                 usageCounterPanel.updateMaxContextTokens(activeModel.maxContextTokens.coerceAtLeast(1024))
             }
             showLandingScreen()
-            scope.launch {
-                try {
-                    val client = ApiClient(
-                        baseUrl = settings.state.baseUrl,
-                        apiKey = settings.getApiKey() ?: "",
-                        model = settings.state.model
-                    )
-                    val models = client.listModels()
-                    enhancedInputPanel.updateModelList(models)
-                } catch (_: Exception) { }
-            }
+            // Requirement 9: update model list with all providers' models as ProviderName/ModelName
+            val allModelNames = settings.getProviders()
+                .filter { it.enabled }
+                .flatMap { p -> p.models.filter { it.enabled }.map { "${p.name}/${it.name}" } }
+            enhancedInputPanel.updateModelList(allModelNames)
         },
         onCancel = { showLandingScreen() }
     )
@@ -261,18 +255,38 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
             showLandingScreen()
         }
 
-        // Wire up model sync callback for the provider setup panel
+        // Wire up callbacks for the provider setup panel v2
         providerSetupPanel.onSyncModels = { provider ->
-            scope.launch {
-                try {
-                    val synced = providerManager.syncModels(provider)
-                    settings.addProvider(synced)
-                    SwingUtilities.invokeLater {
-                        providerSetupPanel.onModelsSynced(synced)
-                    }
-                } catch (e: Exception) {
-                    DebugLog.warn("ChatToolWindow", "Model sync failed for '${provider.name}': ${e.message}")
+            try {
+                val synced = providerManager.syncModels(provider)
+                settings.addProvider(synced)
+                synced
+            } catch (e: Exception) {
+                DebugLog.warn("ChatToolWindow", "Model sync failed for '${provider.name}': ${e.message}")
+                null
+            }
+        }
+
+        providerSetupPanel.onTestConnection = { provider ->
+            try {
+                providerManager.testConnection(provider)
+            } catch (e: Exception) {
+                DebugLog.warn("ChatToolWindow", "Connection test failed for '${provider.name}': ${e.message}")
+                null
+            }
+        }
+
+        providerSetupPanel.onMeasureModels = { provider ->
+            try {
+                val results = mutableMapOf<String, Long>()
+                for (model in provider.models) {
+                    val latency = providerManager.measureModel(provider, model.id)
+                    results[model.id] = latency
                 }
+                results
+            } catch (e: Exception) {
+                DebugLog.warn("ChatToolWindow", "Measure failed for '${provider.name}': ${e.message}")
+                null
             }
         }
 
@@ -402,21 +416,14 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
             }
         }
 
-        scope.launch {
-            try {
-                val client = ApiClient(
-                    baseUrl = settings.state.baseUrl,
-                    apiKey = settings.getApiKey() ?: "",
-                    model = settings.state.model
-                )
-                val models = client.listModels()
-                enhancedInputPanel.updateModelList(models)
-                SwingUtilities.invokeLater { conversationTabPanel.updateModelStatus(settings.state.model) }
-            } catch (_: Exception) { }
+        // Requirement 9: update model list with all providers' models as ProviderName/ModelName
+        val allModelNames = settings.getProviders()
+            .filter { it.enabled }
+            .flatMap { p -> p.models.filter { it.enabled }.map { "${p.name}/${it.name}" } }
+        if (allModelNames.isNotEmpty()) {
+            enhancedInputPanel.updateModelList(allModelNames)
         }
-
-        // Set initial model status
-        conversationTabPanel.updateModelStatus(settings.state.model)
+        SwingUtilities.invokeLater { conversationTabPanel.updateModelStatus(settings.state.defaultModelDisplayName.ifBlank { settings.state.model }) }
 
         ThemeUtils.onThemeChange {
             SwingUtilities.invokeLater {
