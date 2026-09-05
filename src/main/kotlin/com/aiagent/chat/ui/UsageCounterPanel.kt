@@ -23,8 +23,12 @@ import javax.swing.*
  * - Click to open detailed breakdown popup
  */
 class UsageCounterPanel(
-    private val maxContextTokens: Int = 32768
+    private var maxContextTokens: Int = 32768
 ) : JPanel(BorderLayout()) {
+
+    fun updateMaxContextTokens(newMax: Int) {
+        maxContextTokens = newMax
+    }
 
     private val tokenLabel = JLabel("0")
     private val ringPanel = CircularProgressRing(18, 2.5f)

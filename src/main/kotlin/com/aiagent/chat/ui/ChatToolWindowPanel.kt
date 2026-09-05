@@ -87,6 +87,17 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
     private val modelField = JBTextField()
     private val apiKeyField = JPasswordField()
 
+    // --- Agent parameters ---
+    private val maxStepsField = JBTextField()
+    private val maxContextTokensField = JBTextField()
+    private val maxOutputTokensField = JBTextField()
+
+    // --- Multi-provider fields ---
+    private val multiProviderCheckBox = JBCheckBox("Enable multi-provider mode")
+    private val dynamicRoutingCheckBox = JBCheckBox("Enable dynamic model routing")
+    private val providerListModel = javax.swing.DefaultListModel<String>()
+    private val providerList = JBList(providerListModel)
+
     private var activeEngineJob: Job? = null
     private var activeConversationId: String? = null
     private var currentPhase = "execution"
@@ -228,9 +239,7 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                 enhancedInputPanel.requestFocus()
             },
             onConfigure = {
-                baseUrlField.text = settings.state.baseUrl
-                modelField.text = settings.state.model
-                apiKeyField.text = settings.getApiKey() ?: ""
+                syncSetupFieldsFromSettings()
                 cardLayout.show(this, SETUP_CARD)
             }
         )
@@ -324,9 +333,7 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
 
         val settingsItem = JMenuItem("Settings", AllIcons.General.Settings)
         settingsItem.addActionListener {
-            baseUrlField.text = settings.state.baseUrl
-            modelField.text = settings.state.model
-            apiKeyField.text = settings.getApiKey() ?: ""
+            syncSetupFieldsFromSettings()
             cardLayout.show(this, SETUP_CARD)
         }
         popup.add(settingsItem)
@@ -365,27 +372,172 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
         popup.show(source, 0, source.height)
     }
 
-    private fun buildSetupPanel(): JPanel {
+    private fun syncSetupFieldsFromSettings() {
         baseUrlField.text = settings.state.baseUrl
         modelField.text = settings.state.model
         apiKeyField.text = settings.getApiKey() ?: ""
+        maxStepsField.text = settings.state.maxSteps.toString()
+        maxContextTokensField.text = settings.state.maxContextTokens.toString()
+        maxOutputTokensField.text = settings.state.maxOutputTokens.toString()
+        multiProviderCheckBox.isSelected = settings.isMultiProviderEnabled()
+        dynamicRoutingCheckBox.isSelected = settings.isDynamicRoutingEnabled()
+        refreshProviderListModel()
+    }
+
+    private fun refreshProviderListModel() {
+        providerListModel.clear()
+        for (p in settings.getProviders()) {
+            val modelCount = p.models.size
+            providerListModel.addElement("${p.name} | ${p.baseUrl} | ${p.authHeaderType} | $modelCount models")
+        }
+    }
+
+    private fun saveAllSettings() {
+        settings.state.baseUrl = baseUrlField.text.trim()
+        settings.state.model = modelField.text.trim()
+        settings.setApiKey(String(apiKeyField.password))
+        settings.state.maxSteps = maxStepsField.text.trim().toIntOrNull() ?: 25
+        settings.state.maxContextTokens = maxContextTokensField.text.trim().toIntOrNull() ?: 32768
+        settings.state.maxOutputTokens = maxOutputTokensField.text.trim().toIntOrNull() ?: 4096
+        settings.setMultiProviderEnabled(multiProviderCheckBox.isSelected)
+        settings.setDynamicRoutingEnabled(dynamicRoutingCheckBox.isSelected)
+        // Update usage tracker with new context limit
+        usageTracker.updateMaxContextTokens(settings.state.maxContextTokens.coerceAtLeast(1024))
+        usageCounterPanel.updateMaxContextTokens(settings.state.maxContextTokens.coerceAtLeast(1024))
+    }
+
+    private fun showAddProviderDialog() {
+        val nameField = JBTextField()
+        val urlField = JBTextField()
+        val keyField = JPasswordField()
+        val authCombo = JComboBox(arrayOf("Bearer (Authorization header)", "x-api-key header"))
+
+        val dialogPanel = panel {
+            row("Provider Name:") { cell(nameField).align(Align.FILL) }
+            row("Base URL:") { cell(urlField).align(Align.FILL) }
+            row("API Key:") { cell(keyField).align(Align.FILL) }
+            row("Auth Type:") { cell(authCombo).align(Align.FILL) }
+        }
+
+        val dialog = object : com.intellij.openapi.ui.DialogWrapper(project, false) {
+            init { init() }
+            override fun createCenterPanel(): JComponent = dialogPanel
+        }
+        dialog.title = "Add Provider"
+        dialog.show()
+
+        if (dialog.exitCode == com.intellij.openapi.ui.DialogWrapper.OK_EXIT_CODE) {
+            val name = nameField.text.trim()
+            val url = urlField.text.trim()
+            val key = String(keyField.password).trim()
+            if (name.isNotEmpty() && url.isNotEmpty()) {
+                val authType = if (authCombo.selectedIndex == 1)
+                    com.aiagent.chat.model.AuthHeaderType.X_API_KEY
+                else
+                    com.aiagent.chat.model.AuthHeaderType.BEARER
+                val id = "prov_${System.currentTimeMillis()}"
+                val provider = com.aiagent.chat.model.ProviderConfig(
+                    id = id, name = name, baseUrl = url, apiKey = key, authHeaderType = authType
+                )
+                settings.addProvider(provider)
+                refreshProviderListModel()
+                // Try to sync models in background
+                scope.launch {
+                    try {
+                        val synced = providerManager.addProvider(provider)
+                        settings.addProvider(synced)
+                        SwingUtilities.invokeLater { refreshProviderListModel() }
+                    } catch (_: Exception) { }
+                }
+            }
+        }
+    }
+
+    private fun removeSelectedProvider() {
+        val idx = providerList.selectedIndex
+        if (idx < 0) return
+        val providers = settings.getProviders()
+        if (idx < providers.size) {
+            settings.removeProvider(providers[idx].id)
+            providerManager.removeProvider(providers[idx].id)
+            refreshProviderListModel()
+        }
+    }
+
+    private fun buildSetupPanel(): JPanel {
+        syncSetupFieldsFromSettings()
 
         return panel {
             row {
-                label("Welcome to AI Agent Chat").applyToComponent {
+                label("AI Agent Chat - Settings").applyToComponent {
                     font = font.deriveFont(java.awt.Font.BOLD, 16f)
                 }
             }
-            row { label("Please configure your API connection to begin.") }
+            row { label("Configure your API connection and agent parameters.") }
             separator()
+
+            // --- Connection ---
+            row {
+                label("Connection").applyToComponent {
+                    font = font.deriveFont(java.awt.Font.BOLD, 13f)
+                }
+            }
             row("Base URL:") { cell(baseUrlField).align(Align.FILL) }
             row("Model:") { cell(modelField).align(Align.FILL) }
             row("API Key:") { cell(apiKeyField).align(Align.FILL) }
+
+            separator()
+
+            // --- Agent Parameters ---
+            row {
+                label("Agent Parameters").applyToComponent {
+                    font = font.deriveFont(java.awt.Font.BOLD, 13f)
+                }
+            }
+            row("Max Steps:") {
+                cell(maxStepsField).align(Align.FILL)
+                comment("Maximum agent reasoning steps per request (default: 25)")
+            }
+            row("Max Context Tokens:") {
+                cell(maxContextTokensField).align(Align.FILL)
+                comment("Context window size in tokens (default: 32768)")
+            }
+            row("Max Output Tokens:") {
+                cell(maxOutputTokensField).align(Align.FILL)
+                comment("Maximum output tokens per response (default: 4096)")
+            }
+
+            separator()
+
+            // --- Multi-Provider ---
+            row {
+                label("Multi-Provider Architecture").applyToComponent {
+                    font = font.deriveFont(java.awt.Font.BOLD, 13f)
+                }
+            }
+            row { cell(multiProviderCheckBox) }
+            row { cell(dynamicRoutingCheckBox) }
+            row {
+                label("Configured Providers:")
+            }
+            row {
+                cell(providerList).align(Align.FILL)
+            }
+            row {
+                button("Add Provider") {
+                    showAddProviderDialog()
+                }
+                button("Remove Selected") {
+                    removeSelectedProvider()
+                }
+            }
+
+            separator()
+
+            // --- Save / Cancel ---
             row {
                 button("Save and Start Chat") {
-                    settings.state.baseUrl = baseUrlField.text
-                    settings.state.model = modelField.text
-                    settings.setApiKey(String(apiKeyField.password))
+                    saveAllSettings()
                     cardLayout.show(this@ChatToolWindowPanel, LANDING_CARD)
                     scope.launch {
                         try {
