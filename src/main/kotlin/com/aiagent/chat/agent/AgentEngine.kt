@@ -597,7 +597,7 @@ class AgentEngine(
         }
     }
 
-    private fun buildSystemPrompt(toolNames: List<String>, memory: String, globalMem: String, phase: String): String {
+    internal fun buildSystemPrompt(toolNames: List<String>, memory: String, globalMem: String, phase: String): String {
         return "You are an autonomous coding agent working inside a CLion project.\n" +
                 "Available tools: ${toolNames.joinToString(", ")}.\n" +
                 "Current phase: '$phase'. In 'discovery', you only have read-only tools to explore the codebase. " +
@@ -607,6 +607,10 @@ class AgentEngine(
                 "Use compress_chat_probe to check if context is getting long, and compress_chat_apply to compact it.\n" +
                 "Use ask_questions to ask the user structured questions when you need clarification.\n" +
                 "Use undo_textdoc to revert the last file edit if you made a mistake.\n" +
+                "IMPORTANT: Prefer run_python over run_command for any computation, data processing, file parsing, or scripting tasks. " +
+                "Use run_python for calculations, string manipulation, JSON/XML processing, regex operations, and any logic that can be expressed in Python. " +
+                "Only use run_command for tasks that genuinely require shell features (e.g. git, build tools, process management) " +
+                "or when Python is not suitable for the task.\n" +
                 (if (globalMem.isNotBlank()) "\n<agent_global_memory>\n$globalMem\n</agent_global_memory>" else "") +
                 (if (memory.isNotBlank()) "\n<agent_memory>\n$memory\n</agent_memory>" else "") +
                 planManager.toSystemPromptSection() +

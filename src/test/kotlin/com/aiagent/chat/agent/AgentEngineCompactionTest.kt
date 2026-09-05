@@ -327,6 +327,80 @@ class AgentEngineCompactionTest {
         assertEquals(AgentEngine.COMPRESSED_TOOL_NOTICE, result[1].content)
     }
 
+    // --- System prompt: run_python preference ---
+
+    @Test
+    fun `system prompt mentions run_python preference`() {
+        val engine = createEngine()
+        val prompt = engine.buildSystemPrompt(listOf("read_file", "run_python", "run_command"), "", "", "discovery")
+        assertTrue(prompt.contains("run_python"))
+    }
+
+    @Test
+    fun `system prompt says to prefer run_python over run_command`() {
+        val engine = createEngine()
+        val prompt = engine.buildSystemPrompt(listOf("read_file", "run_python", "run_command"), "", "", "discovery")
+        assertTrue(prompt.contains("Prefer run_python over run_command"))
+    }
+
+    @Test
+    fun `system prompt lists computation tasks for run_python`() {
+        val engine = createEngine()
+        val prompt = engine.buildSystemPrompt(listOf("run_python"), "", "", "discovery")
+        assertTrue(prompt.contains("computation"))
+        assertTrue(prompt.contains("data processing"))
+    }
+
+    @Test
+    fun `system prompt says run_command only for shell-specific tasks`() {
+        val engine = createEngine()
+        val prompt = engine.buildSystemPrompt(listOf("run_python", "run_command"), "", "", "discovery")
+        assertTrue(prompt.contains("git"))
+        assertTrue(prompt.contains("build tools"))
+    }
+
+    @Test
+    fun `system prompt includes available tool names`() {
+        val engine = createEngine()
+        val tools = listOf("read_file", "write_file", "run_python", "run_command")
+        val prompt = engine.buildSystemPrompt(tools, "", "", "discovery")
+        assertTrue(prompt.contains("read_file"))
+        assertTrue(prompt.contains("write_file"))
+        assertTrue(prompt.contains("run_python"))
+        assertTrue(prompt.contains("run_command"))
+    }
+
+    @Test
+    fun `system prompt includes phase information`() {
+        val engine = createEngine()
+        val prompt = engine.buildSystemPrompt(listOf("read_file"), "", "", "execution")
+        assertTrue(prompt.contains("execution"))
+    }
+
+    @Test
+    fun `system prompt includes memory when provided`() {
+        val engine = createEngine()
+        val prompt = engine.buildSystemPrompt(listOf("read_file"), "remember to use tabs", "", "discovery")
+        assertTrue(prompt.contains("remember to use tabs"))
+        assertTrue(prompt.contains("agent_memory"))
+    }
+
+    @Test
+    fun `system prompt includes global memory when provided`() {
+        val engine = createEngine()
+        val prompt = engine.buildSystemPrompt(listOf("read_file"), "", "global context here", "discovery")
+        assertTrue(prompt.contains("global context here"))
+        assertTrue(prompt.contains("agent_global_memory"))
+    }
+
+    @Test
+    fun `system prompt excludes memory sections when blank`() {
+        val engine = createEngine()
+        val prompt = engine.buildSystemPrompt(listOf("read_file"), "", "", "discovery")
+        assertFalse(prompt.contains("agent_memory"))
+        assertFalse(prompt.contains("agent_global_memory"))
+    }
+
     // --- Helper ---
 
     private fun createEngine(contextCompactor: ContextCompactor? = null): AgentEngine {
