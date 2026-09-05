@@ -22,7 +22,12 @@ enum class ModelSize {
     @SerialName("large") LARGE,
     @SerialName("xl") XL;
 
-    val displayName: String get() = name.lowercase()
+    val displayName: String get() = when (this) {
+        SMALL -> "small"
+        MEDIUM -> "medium"
+        LARGE -> "large"
+        XL -> "X-Large"
+    }
 }
 
 /**

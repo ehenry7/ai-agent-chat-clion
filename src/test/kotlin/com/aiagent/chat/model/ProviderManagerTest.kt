@@ -138,7 +138,7 @@ class ProviderManagerTest {
         assertTrue(section.contains("gpt-4o-mini"))
         assertTrue(section.contains("o1-preview"))
         assertTrue(section.contains("size=small"))
-        assertTrue(section.contains("size=xl"))
+        assertTrue(section.contains("size=X-Large"))
         assertTrue(section.contains("cost=low-cost"))
         assertTrue(section.contains("cost=high-cost"))
         assertTrue(section.contains("SIMPLE tasks"))

@@ -38,7 +38,7 @@ class ProviderConfigTest {
         assertEquals("small", ModelSize.SMALL.displayName)
         assertEquals("medium", ModelSize.MEDIUM.displayName)
         assertEquals("large", ModelSize.LARGE.displayName)
-        assertEquals("xl", ModelSize.XL.displayName)
+        assertEquals("X-Large", ModelSize.XL.displayName)
     }
 
     @Test

@@ -368,7 +368,7 @@ class ProviderSetupPanel(
         // Set editors
         modelTable.columnModel.getColumn(0).cellRenderer = CheckboxRenderer()
         modelTable.columnModel.getColumn(0).cellEditor = CheckboxEditor()
-        modelTable.columnModel.getColumn(3).cellEditor = ComboBoxEditor(arrayOf("small", "medium", "large", "xl"))
+        modelTable.columnModel.getColumn(3).cellEditor = ComboBoxEditor(arrayOf("small", "medium", "large", "X-Large"))
         modelTable.columnModel.getColumn(4).cellEditor = ComboBoxEditor(arrayOf("free", "low-cost", "medium-cost", "high-cost"))
     }
 
@@ -744,7 +744,7 @@ class ProviderSetupPanel(
         "small" -> ModelSize.SMALL
         "medium" -> ModelSize.MEDIUM
         "large" -> ModelSize.LARGE
-        "xl" -> ModelSize.XL
+        "xl", "x-large", "xlarge" -> ModelSize.XL
         else -> ModelSize.MEDIUM
     }
 
