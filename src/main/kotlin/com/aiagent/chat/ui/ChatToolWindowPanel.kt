@@ -887,7 +887,7 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                 maxOutputTokens = if (settings.state.maxOutputTokens > 0) settings.state.maxOutputTokens else null
             )
 
-            val contextCompactor = ContextCompactor(client)
+            val contextCompactor = ContextCompactor(client, maxContextTokens = settings.state.maxContextTokens)
 
             // Wire up message access for compress_chat tools
             toolHandler.contextCompactor = contextCompactor
