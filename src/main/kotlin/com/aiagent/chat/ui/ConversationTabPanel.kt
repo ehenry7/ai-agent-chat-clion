@@ -50,47 +50,70 @@ class ConversationTabPanel : JBPanel<ConversationTabPanel>(BorderLayout()) {
     var onRenameRequest: ((java.awt.Component) -> Unit)? = null
     /** Called when the last remaining tab is closed — parent should show the landing screen. */
     var onLastTabClosed: (() -> Unit)? = null
+    /** Called when user wants to select a model from the More dropdown. */
+    var onSelectModel: (() -> Unit)? = null
+    /** Called when user wants to go to the sessions/landing view. */
+    var onSessionsView: (() -> Unit)? = null
+    /** Called when user wants to compress context. */
+    var onCompressContext: (() -> Unit)? = null
+    /** Called when user wants to toggle phase. */
+    var onPhaseToggle: (() -> Unit)? = null
+    /** Provides current model name for display in More dropdown. */
+    var getModelName: (() -> String)? = null
+    /** Provides current endpoint URL for display in More dropdown. */
+    var getEndpoint: (() -> String)? = null
+    /** Provides current phase for display in More dropdown. */
+    var getPhase: (() -> String)? = null
 
     init {
         border = JBUI.Borders.empty()
         background = JBColor.PanelBackground
 
-        // Row 1: Tab bar (conversation tabs only, scrollable)
-        val tabScroll = JScrollPane(tabBar).apply {
-            border = JBUI.Borders.empty()
-            horizontalScrollBarPolicy = JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED
-            verticalScrollBarPolicy = JScrollPane.VERTICAL_SCROLLBAR_NEVER
-            preferredSize = Dimension(0, 32)
-        }
-
-        // Row 2: Button bar — separated from tabs, bigger buttons with text
-        val buttonBar = JPanel(FlowLayout(FlowLayout.RIGHT, 6, 4)).apply {
+        // Row 1 (TOP): Button bar — above the tabs now
+        val buttonBar = JPanel(FlowLayout(FlowLayout.RIGHT, 4, 2)).apply {
             isOpaque = false
             border = JBUI.Borders.compound(
                 JBUI.Borders.customLine(JBColor.border(), 0, 0, 1, 0),
                 JBUI.Borders.empty(2, 6)
             )
         }
-        // Model status button (shows current model + phase)
-        buttonBar.add(createModelStatusButton())
-        // New Session button with text
-        buttonBar.add(createTextIconButton(AllIcons.General.Add, "New Session", "New Session") {
-            onNewTab?.invoke()
-        })
-        // More Actions button with text
-        buttonBar.add(createTextIconButton(createDropdownArrowIcon(), "More", "Session Actions") { source ->
-            showMoreActionsPopup(source)
-        })
-        // Settings/Menu button with text
-        buttonBar.add(createTextIconButton(createHamburgerIcon(), "Menu", "Settings & Menu") { source ->
+
+        // Combined New Session + More panel with separator
+        val combinedPanel = JPanel(FlowLayout(FlowLayout.LEFT, 2, 0)).apply {
+            isOpaque = false
+            // New Session button (icon only, compact)
+            add(createIconButton(AllIcons.General.Add, "New Session") {
+                onNewTab?.invoke()
+            })
+            // Separator
+            add(JSeparator(SwingConstants.VERTICAL).apply {
+                preferredSize = Dimension(2, 20)
+            })
+            // More Actions dropdown (icon only, compact)
+            add(createIconButton(createDropdownArrowIcon(), "More Actions") { source ->
+                showMoreActionsPopup(source)
+            })
+        }
+        buttonBar.add(combinedPanel)
+
+        // Menu button (icon only, compact)
+        buttonBar.add(createIconButton(createHamburgerIcon(), "Settings & Menu") { source ->
             onMenuClick?.invoke(source)
         })
 
-        // Stack tab row and button row vertically
+        // Row 2 (BELOW buttons): Tab bar (conversation tabs only, scrollable, narrower)
+        val tabScroll = JScrollPane(tabBar).apply {
+            border = JBUI.Borders.empty()
+            horizontalScrollBarPolicy = JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED
+            verticalScrollBarPolicy = JScrollPane.VERTICAL_SCROLLBAR_NEVER
+            preferredSize = Dimension(0, 26)
+        }
+
+        // Stack button row above tab row
         val topPanel = JPanel(BorderLayout()).apply {
             isOpaque = false
+            add(buttonBar, BorderLayout.NORTH)
             add(tabScroll, BorderLayout.CENTER)
-            add(buttonBar, BorderLayout.SOUTH)
         }
         add(topPanel, BorderLayout.NORTH)
         add(contentPanel, BorderLayout.CENTER)
@@ -323,10 +346,40 @@ class ConversationTabPanel : JBPanel<ConversationTabPanel>(BorderLayout()) {
     }
 
     /**
-     * Shows a popup with "more actions": Session Info, Rename Session, Settings/Menu.
+     * Shows a popup with "more actions": Model selection, Session Info, Rename, Sessions View, Compress, Phase.
      */
     private fun showMoreActionsPopup(source: java.awt.Component) {
         val popup = javax.swing.JPopupMenu()
+
+        // Model selection
+        val modelItem = javax.swing.JMenuItem("Select Model...", AllIcons.General.Balloon)
+        modelItem.addActionListener {
+            onSelectModel?.invoke()
+        }
+        popup.add(modelItem)
+
+        // Model info (read-only display)
+        val modelName = getModelName?.invoke() ?: "N/A"
+        val modelInfoItem = javax.swing.JMenuItem("Model: $modelName").apply {
+            icon = AllIcons.General.Information
+            isEnabled = false
+        }
+        popup.add(modelInfoItem)
+
+        val endpoint = getEndpoint?.invoke() ?: "N/A"
+        val endpointItem = javax.swing.JMenuItem("Endpoint: ${endpoint.takeLast(40)}").apply {
+            isEnabled = false
+        }
+        popup.add(endpointItem)
+
+        popup.addSeparator()
+
+        // Sessions View — go to landing/welcome screen
+        val sessionsItem = javax.swing.JMenuItem("Sessions View", AllIcons.Project.ToolWindow)
+        sessionsItem.addActionListener {
+            onSessionsView?.invoke()
+        }
+        popup.add(sessionsItem)
 
         // Session Info
         val infoItem = javax.swing.JMenuItem("Session Info", AllIcons.General.Information)
@@ -335,12 +388,30 @@ class ConversationTabPanel : JBPanel<ConversationTabPanel>(BorderLayout()) {
         }
         popup.add(infoItem)
 
-        // Rename Session (via callback to parent)
+        // Rename Session
         val renameItem = javax.swing.JMenuItem("Rename Session", AllIcons.Actions.Edit)
         renameItem.addActionListener {
             onRenameRequest?.invoke(source)
         }
         popup.add(renameItem)
+
+        popup.addSeparator()
+
+        // Compress Context
+        val compressItem = javax.swing.JMenuItem("Compress Context", AllIcons.Actions.GC)
+        compressItem.addActionListener {
+            onCompressContext?.invoke()
+        }
+        popup.add(compressItem)
+
+        // Phase toggle
+        val phaseLabel = getPhase?.invoke() ?: "execution"
+        val phaseDisplay = if (phaseLabel == "execution") "Phase: Execution" else "Phase: Discovery"
+        val phaseItem = javax.swing.JMenuItem(phaseDisplay, AllIcons.Actions.ChangeView)
+        phaseItem.addActionListener {
+            onPhaseToggle?.invoke()
+        }
+        popup.add(phaseItem)
 
         popup.show(source, 0, source.height)
     }
@@ -388,7 +459,7 @@ class ConversationTabPanel : JBPanel<ConversationTabPanel>(BorderLayout()) {
     ) : JPanel(BorderLayout()) {
 
         private val titleLabel = JBLabel(titleText).apply {
-            font = font.deriveFont(java.awt.Font.PLAIN, 12f)
+            font = font.deriveFont(java.awt.Font.PLAIN, 11f)
             border = JBUI.Borders.empty(0, 4)
         }
 
@@ -413,7 +484,7 @@ class ConversationTabPanel : JBPanel<ConversationTabPanel>(BorderLayout()) {
             isOpaque = false
             border = JBUI.Borders.compound(
                 JBUI.Borders.customLine(JBColor.border(), 0, 0, 0, 1),
-                JBUI.Borders.empty(4, 8)
+                JBUI.Borders.empty(2, 6)
             )
             cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
 
@@ -471,16 +542,17 @@ class ConversationTabPanel : JBPanel<ConversationTabPanel>(BorderLayout()) {
         fun setActive(active: Boolean) {
             titleLabel.font = titleLabel.font.deriveFont(
                 if (active) java.awt.Font.BOLD else java.awt.Font.PLAIN,
-                12f
+                11f
             )
             titleLabel.foreground = if (active) {
-                JBColor(0x0066CC, 0x4A9EFF)
+                JBColor(0x4A9EFF, 0x6BB6FF)
             } else {
                 JBColor(0x666666, 0x999999)
             }
             isOpaque = active
             if (active) {
-                background = JBColor(0xE8EAF0, 0x2A2D30)
+                // Light blue in dark mode, dark blue in light theme
+                background = JBColor(0xD0E4FF, 0x1A3A5C)
             }
         }
 

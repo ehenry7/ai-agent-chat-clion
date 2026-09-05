@@ -149,6 +149,17 @@ class ApiClient(
             throw ApiException(status, errorMsg)
         }
 
+        // Detect HTML response (server error page, proxy error, wrong endpoint)
+        if (respBody.trimStart().startsWith("<") || respBody.contains("<!doctype", ignoreCase = true) || respBody.contains("<html", ignoreCase = true)) {
+            val htmlError = "Server returned HTML instead of JSON. This usually means the endpoint URL is wrong, " +
+                "the server is down, or a proxy/firewall intercepted the request.\n" +
+                "URL: ${baseUrl.trimEnd('/')}/chat/completions\n" +
+                "HTTP Status: $status\n" +
+                "Response (first 2000 chars):\n${respBody.take(2000)}"
+            DebugLog.error("ApiClient", "HTML response detected instead of JSON: ${respBody.take(500)}")
+            throw ApiException(status, htmlError)
+        }
+
         val parsed = json.decodeFromString<ChatCompletionResponse>(respBody)
         DebugLog.info("ApiClient", "Non-streaming response received, ${parsed.choices.size} choices")
         val message = parsed.choices.firstOrNull()?.message
@@ -251,6 +262,20 @@ class ApiClient(
             val errorMsg = "API error $status: ${sanitizeForLog(body)}"
             DebugLog.error("ApiClient", errorMsg)
             throw ApiException(status, errorMsg)
+        }
+
+        // Detect HTML response in streaming path via Content-Type header
+        val contentType = response.headers().firstValue("content-type").orElse("")
+        if (contentType.contains("text/html", ignoreCase = true)) {
+            val body = response.body().map { it }.toList().joinToString("")
+            val htmlError = "Server returned HTML instead of JSON. This usually means the endpoint URL is wrong, " +
+                "the server is down, or a proxy/firewall intercepted the request.\n" +
+                "URL: ${baseUrl.trimEnd('/')}/chat/completions\n" +
+                "HTTP Status: $status\n" +
+                "Content-Type: $contentType\n" +
+                "Response (first 2000 chars):\n${body.take(2000)}"
+            DebugLog.error("ApiClient", "HTML response detected in stream (Content-Type=$contentType): ${body.take(500)}")
+            throw ApiException(status, htmlError)
         }
 
         DebugLog.info("ApiClient", "SSE stream opened, processing chunks...")

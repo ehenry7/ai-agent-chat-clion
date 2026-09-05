@@ -412,6 +412,14 @@ class EnhancedInputPanel(
         }
     }
 
+    /**
+     * Public method to programmatically trigger the model tree popup.
+     * Used by the More dropdown in ConversationTabPanel.
+     */
+    fun triggerModelTreePopup() {
+        SwingUtilities.invokeLater { showModelTreePopup() }
+    }
+
     private fun showModelTreePopup() {
         if (modelTreeData.isEmpty()) return
 
@@ -534,9 +542,36 @@ class EnhancedInputPanel(
         popup.contentPane.add(statusLabel, BorderLayout.SOUTH)
         popup.pack()
 
-        // Position below the model selector button
+        // Position below the model selector button, clamped to screen bounds
         val btnLoc = modelSelector.locationOnScreen
-        popup.setLocation(btnLoc.x, btnLoc.y + modelSelector.height)
+        val popupWidth = popup.width
+        val popupHeight = popup.height
+        val screenBounds = java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment()
+            .defaultScreenDevice.defaultConfiguration.bounds
+        val screenInsets = java.awt.Toolkit.getDefaultToolkit()
+            .getScreenInsets(java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment().defaultScreenDevice.defaultConfiguration)
+
+        // Calculate X: try to align with button, but clamp to screen
+        var popupX = btnLoc.x
+        if (popupX + popupWidth > screenBounds.x + screenBounds.width - screenInsets.right) {
+            popupX = screenBounds.x + screenBounds.width - screenInsets.right - popupWidth
+        }
+        if (popupX < screenInsets.left) {
+            popupX = screenInsets.left
+        }
+
+        // Calculate Y: try below button, but if it would go off-screen, try above
+        var popupY = btnLoc.y + modelSelector.height
+        if (popupY + popupHeight > screenBounds.y + screenBounds.height - screenInsets.bottom) {
+            // Try placing above the button
+            popupY = btnLoc.y - popupHeight
+            if (popupY < screenInsets.top) {
+                // Still doesn't fit — clamp to top of usable area
+                popupY = screenInsets.top
+            }
+        }
+
+        popup.setLocation(popupX, popupY)
 
         // Close on Escape
         val escapeStroke = KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0)

@@ -262,6 +262,66 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
             }
         }
 
+        // Model selection from More dropdown — trigger the model tree popup
+        conversationTabPanel.onSelectModel = {
+            enhancedInputPanel.triggerModelTreePopup()
+        }
+
+        // Sessions View from More dropdown — go to landing/welcome screen
+        conversationTabPanel.onSessionsView = {
+            showLandingScreen()
+        }
+
+        // Compress context from More dropdown
+        conversationTabPanel.onCompressContext = {
+            scope.launch {
+                try {
+                    val activeConv = conversationTabPanel.getActiveConversation()
+                    val messages = activeConv?.history?.toList() ?: emptyList()
+                    if (messages.isEmpty()) {
+                        SwingUtilities.invokeLater { statusLabel.text = "No messages to compress" }
+                        return@launch
+                    }
+                    val compactor = toolHandler.contextCompactor
+                    if (compactor == null) {
+                        SwingUtilities.invokeLater { statusLabel.text = "Compactor not available" }
+                        return@launch
+                    }
+                    val sizeBefore = messages.size
+                    SwingUtilities.invokeLater { statusLabel.text = "Compressing context ($sizeBefore messages)..." }
+                    val compacted = compactor.compact(messages)
+                    val sizeAfter = compacted.size
+                    if (activeConv != null) {
+                        activeConv.history.clear()
+                        activeConv.history.addAll(compacted)
+                    }
+                    usageTracker.recordCompaction(sizeBefore, sizeAfter)
+                    SwingUtilities.invokeLater {
+                        statusLabel.text = "Context compressed: $sizeBefore -> $sizeAfter messages"
+                        val activeConv2 = conversationTabPanel.getActiveConversation()
+                        val allMessages = activeConv2?.history?.toList() ?: emptyList()
+                        val summary = usageTracker.computeSummary(allMessages)
+                        usageCounterPanel.updateUsage(summary)
+                    }
+                } catch (e: Exception) {
+                    DebugLog.error("ChatToolWindow", "Manual context compression failed: ${e.message}", e)
+                    SwingUtilities.invokeLater { statusLabel.text = "Compression failed: ${e.message}" }
+                }
+            }
+        }
+
+        // Phase toggle from More dropdown
+        conversationTabPanel.onPhaseToggle = {
+            currentPhase = if (currentPhase == "execution") "discovery" else "execution"
+            DebugLog.info("ChatToolWindow", "Mode toggled to: $currentPhase")
+            statusLabel.text = "Phase: $currentPhase"
+        }
+
+        // Provide info to More dropdown
+        conversationTabPanel.getModelName = { settings.state.model }
+        conversationTabPanel.getEndpoint = { settings.state.baseUrl }
+        conversationTabPanel.getPhase = { currentPhase }
+
         // When the last tab is closed, show the landing/welcome screen
         conversationTabPanel.onLastTabClosed = {
             showLandingScreen()
@@ -466,6 +526,13 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
             cardLayout.show(this, SETUP_CARD)
         }
         popup.add(settingsItem)
+
+        // Sessions View — go to landing/welcome screen
+        val sessionsItem = JMenuItem("Sessions View", AllIcons.Project.ToolWindow)
+        sessionsItem.addActionListener {
+            showLandingScreen()
+        }
+        popup.add(sessionsItem)
 
         popup.addSeparator()
 
@@ -778,23 +845,48 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                 icon = AllIcons.General.Error
             }
             add(titleLabel, BorderLayout.WEST)
-            // Dismiss [x] button
-            val closeBtn = JButton(AllIcons.Actions.Close).apply {
-                toolTipText = "Dismiss"
-                isContentAreaFilled = false
-                isBorderPainted = false
-                isFocusPainted = false
-                margin = JBUI.insets(2)
-                preferredSize = Dimension(20, 20)
-                cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
-                addActionListener {
-                    card.isVisible = false
-                    card.parent?.revalidate()
-                    card.parent?.repaint()
+            // Copy + Dismiss buttons
+            val btnPanel = JPanel(FlowLayout(FlowLayout.RIGHT, 4, 0)).apply {
+                isOpaque = false
+                // Copy button
+                val copyBtn = JButton(AllIcons.Actions.Copy).apply {
+                    toolTipText = "Copy error to clipboard"
+                    isContentAreaFilled = false
+                    isBorderPainted = false
+                    isFocusPainted = false
+                    margin = JBUI.insets(2)
+                    preferredSize = Dimension(20, 20)
+                    cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
+                    addActionListener {
+                        val selection = java.awt.Toolkit.getDefaultToolkit().systemClipboard
+                        selection.setContents(
+                            java.awt.datatransfer.StringSelection(errorText),
+                            null
+                        )
+                        statusLabel.text = "Error copied to clipboard"
+                    }
                 }
+                add(copyBtn)
+                // Dismiss [x] button
+                val closeBtn = JButton(AllIcons.Actions.Close).apply {
+                    toolTipText = "Dismiss"
+                    isContentAreaFilled = false
+                    isBorderPainted = false
+                    isFocusPainted = false
+                    margin = JBUI.insets(2)
+                    preferredSize = Dimension(20, 20)
+                    cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
+                    addActionListener {
+                        card.isVisible = false
+                        card.parent?.revalidate()
+                        card.parent?.repaint()
+                    }
+                }
+                add(closeBtn)
             }
-            add(closeBtn, BorderLayout.EAST)
+            add(btnPanel, BorderLayout.EAST)
         }
+        // Use a scrollable text area so the full error is visible, not truncated
         val body = JBTextArea().apply {
             isEditable = false
             lineWrap = true
@@ -803,8 +895,14 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
             background = card.background
             border = JBUI.Borders.emptyTop(4)
         }
+        val bodyScroll = JBScrollPane(body).apply {
+            border = JBUI.Borders.empty()
+            horizontalScrollBarPolicy = JScrollPane.HORIZONTAL_SCROLLBAR_NEVER
+            verticalScrollBarPolicy = JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED
+            preferredSize = Dimension(0, 120)
+        }
         card.add(titlePanel, BorderLayout.NORTH)
-        card.add(body, BorderLayout.CENTER)
+        card.add(bodyScroll, BorderLayout.CENTER)
         return card
     }
 
