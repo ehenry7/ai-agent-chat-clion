@@ -5,7 +5,6 @@ import com.aiagent.chat.tools.SlashCommands
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.ui.JBColor
@@ -17,10 +16,15 @@ import com.intellij.util.ui.JBUI
 import java.awt.*
 import java.awt.event.KeyAdapter
 import java.awt.event.KeyEvent
+import java.awt.event.MouseAdapter
+import java.awt.event.MouseEvent
 import java.awt.geom.Area
 import java.awt.geom.Rectangle2D
 import java.awt.geom.RoundRectangle2D
 import javax.swing.*
+import javax.swing.tree.DefaultMutableTreeNode
+import javax.swing.tree.DefaultTreeCellRenderer
+import javax.swing.tree.TreeSelectionModel
 
 /**
  * Enhanced input panel with rounded corners, file mention tags, and model selector.
@@ -67,10 +71,27 @@ class EnhancedInputPanel(
         preferredSize = Dimension(28, 28)
     }
 
-    private val modelSelector = ComboBox<String>().apply {
+    private val modelSelector = JButton("Select Model").apply {
         toolTipText = "Select model"
-        preferredSize = Dimension(150, 28)
+        isContentAreaFilled = true
+        isBorderPainted = true
+        isFocusPainted = false
+        margin = JBUI.insets(4, 8)
+        font = font.deriveFont(Font.PLAIN, 12f)
+        cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+        preferredSize = Dimension(160, 28)
     }
+
+    /** Data for the model tree popup: provider -> models with timing. */
+    data class ModelTreeEntry(
+        val providerName: String,
+        val modelName: String,
+        val modelId: String,
+        val latencyMs: Long,
+        val measured: Boolean
+    )
+
+    private var modelTreeData: List<ModelTreeEntry> = emptyList()
 
     private var promptHistory = mutableListOf<String>()
     private var historyIndex = -1
@@ -85,11 +106,7 @@ class EnhancedInputPanel(
         setupListeners()
 
         modelSelector.addActionListener {
-            val selected = modelSelector.selectedItem as? String ?: return@addActionListener
-            if (selected != currentModel()) {
-                DebugLog.info("EnhancedInputPanel", "Model selector changed to '$selected'")
-                onModelChange(selected)
-            }
+            showModelTreePopup()
         }
     }
 
@@ -373,14 +390,170 @@ class EnhancedInputPanel(
     }
 
     fun updateModelList(models: List<String>) {
-        SwingUtilities.invokeLater {
-            modelSelector.removeAllItems()
-            models.forEach { modelSelector.addItem(it) }
-            val current = currentModel()
-            if (models.contains(current)) {
-                modelSelector.selectedItem = current
+        // Legacy flat-list API: convert to tree entries without timing
+        val entries = models.map { name ->
+            val parts = name.split("/", limit = 2)
+            if (parts.size == 2) {
+                ModelTreeEntry(parts[0], parts[1], name, 0, false)
+            } else {
+                ModelTreeEntry("Default", name, name, 0, false)
             }
         }
+        updateModelTree(entries)
+    }
+
+    fun updateModelTree(entries: List<ModelTreeEntry>) {
+        SwingUtilities.invokeLater {
+            modelTreeData = entries
+            // Update button text to show current model
+            val current = currentModel()
+            val match = entries.find { it.modelId == current }
+            modelSelector.text = match?.let { "${it.providerName}/${it.modelName}" } ?: current.take(20)
+        }
+    }
+
+    private fun showModelTreePopup() {
+        if (modelTreeData.isEmpty()) return
+
+        // Group by provider
+        val byProvider = modelTreeData.groupBy { it.providerName }
+
+        // Build tree model
+        val root = DefaultMutableTreeNode("Models")
+        for ((providerName, models) in byProvider) {
+            val providerNode = DefaultMutableTreeNode(providerName)
+            for (m in models) {
+                providerNode.add(DefaultMutableTreeNode(m))
+            }
+            root.add(providerNode)
+        }
+
+        // Create popup dialog first so selectModel can reference it
+        val popup = JDialog().apply {
+            title = "Select Model"
+            isModal = false
+            isAlwaysOnTop = true
+            defaultCloseOperation = JDialog.DISPOSE_ON_CLOSE
+        }
+
+        // Define selectModel before tree listeners
+        fun selectModel(entry: ModelTreeEntry) {
+            val modelId = entry.modelId
+            if (modelId != currentModel()) {
+                DebugLog.info("EnhancedInputPanel", "Model tree selected '$modelId'")
+                onModelChange(modelId)
+            }
+            modelSelector.text = "${entry.providerName}/${entry.modelName}"
+            popup.dispose()
+        }
+
+        val tree = JTree(root).apply {
+            isRootVisible = false
+            showsRootHandles = true
+            selectionModel.selectionMode = TreeSelectionModel.SINGLE_TREE_SELECTION
+            rowHeight = 24
+
+            // Custom renderer: show model name + timing for leaves, bold for providers
+            setCellRenderer(object : DefaultTreeCellRenderer() {
+                override fun getTreeCellRendererComponent(
+                    tree: JTree, value: Any, sel: Boolean, expanded: Boolean,
+                    leaf: Boolean, row: Int, hasFocus: Boolean
+                ): java.awt.Component {
+                    super.getTreeCellRendererComponent(tree, value, sel, expanded, leaf, row, hasFocus)
+                    val userObj = (value as? DefaultMutableTreeNode)?.userObject
+                    when (userObj) {
+                        is ModelTreeEntry -> {
+                            val latencyStr = if (userObj.measured && userObj.latencyMs > 0) {
+                                if (userObj.latencyMs < 1000) "${userObj.latencyMs}ms" else "%.2fs".format(userObj.latencyMs / 1000.0)
+                            } else {
+                                "not measured"
+                            }
+                            text = "${userObj.modelName}  ($latencyStr)"
+                            icon = AllIcons.General.Balloon
+                            font = font.deriveFont(Font.PLAIN, 12f)
+                        }
+                        is String -> {
+                            text = userObj
+                            icon = AllIcons.Nodes.Folder
+                            font = font.deriveFont(Font.BOLD, 12f)
+                        }
+                    }
+                    return this
+                }
+            })
+
+            // Click selects a leaf
+            addMouseListener(object : MouseAdapter() {
+                override fun mouseClicked(e: MouseEvent) {
+                    val path = getPathForLocation(e.x, e.y)
+                    if (path != null) {
+                        val node = path.lastPathComponent as? DefaultMutableTreeNode
+                        val entry = node?.userObject as? ModelTreeEntry
+                        if (entry != null) {
+                            selectModel(entry)
+                        }
+                    }
+                }
+            })
+
+            // Enter key selects a leaf
+            addKeyListener(object : KeyAdapter() {
+                override fun keyPressed(e: KeyEvent) {
+                    if (e.keyCode == KeyEvent.VK_ENTER) {
+                        val path = selectionPath
+                        if (path != null) {
+                            val node = path.lastPathComponent as? DefaultMutableTreeNode
+                            val entry = node?.userObject as? ModelTreeEntry
+                            if (entry != null) {
+                                selectModel(entry)
+                            }
+                        }
+                    }
+                }
+            })
+        }
+
+        // Expand all provider nodes by default
+        for (i in 0 until tree.rowCount) {
+            tree.expandRow(i)
+        }
+
+        // Wrap tree in scroll pane with adequate size
+        val scrollPane = JBScrollPane(tree).apply {
+            preferredSize = Dimension(350, 400)
+            border = JBUI.Borders.empty()
+        }
+
+        // Status label at bottom
+        val statusLabel = JBLabel("Click a model to select it").apply {
+            border = JBUI.Borders.empty(4, 8)
+            foreground = JBColor(0x666666, 0x999999)
+        }
+
+        popup.contentPane.add(scrollPane, BorderLayout.CENTER)
+        popup.contentPane.add(statusLabel, BorderLayout.SOUTH)
+        popup.pack()
+
+        // Position below the model selector button
+        val btnLoc = modelSelector.locationOnScreen
+        popup.setLocation(btnLoc.x, btnLoc.y + modelSelector.height)
+
+        // Close on Escape
+        val escapeStroke = KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0)
+        popup.rootPane.registerKeyboardAction(
+            { popup.dispose() },
+            escapeStroke,
+            JComponent.WHEN_IN_FOCUSED_WINDOW
+        )
+
+        // Close when focus is lost
+        popup.addWindowFocusListener(object : java.awt.event.WindowAdapter() {
+            override fun windowLostFocus(e: java.awt.event.WindowEvent) {
+                popup.dispose()
+            }
+        })
+
+        popup.isVisible = true
     }
 
     override fun requestFocus() {

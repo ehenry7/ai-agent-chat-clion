@@ -99,11 +99,21 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                 usageCounterPanel.updateMaxContextTokens(activeModel.maxContextTokens.coerceAtLeast(1024))
             }
             showLandingScreen()
-            // Requirement 9: update model list with all providers' models as ProviderName/ModelName
-            val allModelNames = settings.getProviders()
+            // Update model tree with provider/model/timing data
+            val treeEntries = settings.getProviders()
                 .filter { it.enabled }
-                .flatMap { p -> p.models.filter { it.enabled }.map { "${p.name}/${it.name}" } }
-            enhancedInputPanel.updateModelList(allModelNames)
+                .flatMap { p ->
+                    p.models.filter { it.enabled }.map { m ->
+                        EnhancedInputPanel.ModelTreeEntry(
+                            providerName = p.name,
+                            modelName = m.name.ifBlank { m.id },
+                            modelId = "${p.name}/${m.name.ifBlank { m.id }}",
+                            latencyMs = m.latencyMs,
+                            measured = m.measured
+                        )
+                    }
+                }
+            enhancedInputPanel.updateModelTree(treeEntries)
         },
         onCancel = { showLandingScreen() }
     )
@@ -421,12 +431,22 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
             }
         }
 
-        // Requirement 9: update model list with all providers' models as ProviderName/ModelName
-        val allModelNames = settings.getProviders()
+        // Update model tree with provider/model/timing data
+        val treeEntries = settings.getProviders()
             .filter { it.enabled }
-            .flatMap { p -> p.models.filter { it.enabled }.map { "${p.name}/${it.name}" } }
-        if (allModelNames.isNotEmpty()) {
-            enhancedInputPanel.updateModelList(allModelNames)
+            .flatMap { p ->
+                p.models.filter { it.enabled }.map { m ->
+                    EnhancedInputPanel.ModelTreeEntry(
+                        providerName = p.name,
+                        modelName = m.name.ifBlank { m.id },
+                        modelId = "${p.name}/${m.name.ifBlank { m.id }}",
+                        latencyMs = m.latencyMs,
+                        measured = m.measured
+                    )
+                }
+            }
+        if (treeEntries.isNotEmpty()) {
+            enhancedInputPanel.updateModelTree(treeEntries)
         }
         SwingUtilities.invokeLater { conversationTabPanel.updateModelStatus(settings.state.defaultModelDisplayName.ifBlank { settings.state.model }) }
 
