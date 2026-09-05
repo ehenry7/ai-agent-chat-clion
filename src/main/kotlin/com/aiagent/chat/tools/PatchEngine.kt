@@ -60,7 +60,7 @@ object PatchEngine {
                         val oldL = mutableListOf<String>()
                         val newL = mutableListOf<String>()
                         var eof = false
-                        while (i < lines.size && !lines[i].startsWith("@@") && !lines[i].startsWith("***")) {
+                        while (i < lines.size && !lines[i].startsWith("@@") && !lines[i].startsWith("*** Add File:") && !lines[i].startsWith("*** Delete File:") && !lines[i].startsWith("*** Update File:")) {
                             val l = lines[i]
                             if (l.startsWith(" ")) {
                                 oldL.add(l.substring(1))

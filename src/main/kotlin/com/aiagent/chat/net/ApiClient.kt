@@ -19,6 +19,8 @@ class ApiClient(
     val model: String = "GLM-5.2-1",
     val maxAttempts: Int = 3,
     val retryDelayMs: Long = 1500,
+    val authHeaderType: AuthHeaderType = AuthHeaderType.BEARER,
+    val maxOutputTokens: Int? = null,
     val onRetry: ((attempt: Int, error: String, delay: Long) -> Unit)? = null
 ) {
     private val json = Json {
@@ -102,7 +104,10 @@ class ApiClient(
     private suspend fun chatOnce(messages: List<ChatMessage>, tools: List<ToolDefinition>?): ChatMessage {
         enforceRateLimit()
         val endpoint = URI.create("${baseUrl.trimEnd('/')}/chat/completions")
-        val reqPayload = ChatCompletionRequest(model = model, messages = messages, tools = tools)
+        val reqPayload = ChatCompletionRequest(
+            model = model, messages = messages, tools = tools,
+            maxCompletionTokens = maxOutputTokens
+        )
         val bodyStr = json.encodeToString(reqPayload)
         DebugLog.info("ApiClient", "=== NON-STREAMING REQUEST ===")
         DebugLog.info("ApiClient", "URL: $endpoint")
@@ -115,7 +120,12 @@ class ApiClient(
             .timeout(Duration.ofSeconds(120))
             .header("Content-Type", "application/json")
             .apply {
-                if (apiKey.isNotBlank()) header("Authorization", "Bearer $apiKey")
+                if (apiKey.isNotBlank()) {
+                    when (authHeaderType) {
+                        AuthHeaderType.BEARER -> header("Authorization", "Bearer $apiKey")
+                        AuthHeaderType.X_API_KEY -> header("x-api-key", apiKey)
+                    }
+                }
             }
             .POST(HttpRequest.BodyPublishers.ofString(bodyStr))
             .build()
@@ -197,7 +207,10 @@ class ApiClient(
     ): ChatMessage {
         enforceRateLimit()
         val endpoint = URI.create("${baseUrl.trimEnd('/')}/chat/completions")
-        val reqPayload = ChatCompletionRequest(model = model, messages = messages, tools = tools, stream = true)
+        val reqPayload = ChatCompletionRequest(
+            model = model, messages = messages, tools = tools, stream = true,
+            maxCompletionTokens = maxOutputTokens
+        )
         val bodyStr = json.encodeToString(reqPayload)
         DebugLog.info("ApiClient", "=== STREAMING REQUEST ===")
         DebugLog.info("ApiClient", "URL: $endpoint")
@@ -212,7 +225,12 @@ class ApiClient(
             .header("Content-Type", "application/json")
             .header("Accept", "text/event-stream")
             .apply {
-                if (apiKey.isNotBlank()) header("Authorization", "Bearer $apiKey")
+                if (apiKey.isNotBlank()) {
+                    when (authHeaderType) {
+                        AuthHeaderType.BEARER -> header("Authorization", "Bearer $apiKey")
+                        AuthHeaderType.X_API_KEY -> header("x-api-key", apiKey)
+                    }
+                }
             }
             .POST(HttpRequest.BodyPublishers.ofString(bodyStr))
             .build()
@@ -472,7 +490,12 @@ class ApiClient(
             .uri(endpoint)
             .timeout(Duration.ofSeconds(15))
             .apply {
-                if (apiKey.isNotBlank()) header("Authorization", "Bearer $apiKey")
+                if (apiKey.isNotBlank()) {
+                    when (authHeaderType) {
+                        AuthHeaderType.BEARER -> header("Authorization", "Bearer $apiKey")
+                        AuthHeaderType.X_API_KEY -> header("x-api-key", apiKey)
+                    }
+                }
             }
             .GET()
             .build()

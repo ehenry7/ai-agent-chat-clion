@@ -23,7 +23,8 @@ import javax.swing.SwingUtilities
  */
 class ResponseMessagePanel(
     private val messageText: String,
-    private val project: Project? = null
+    private val project: Project? = null,
+    private val thinkingText: String = ""
 ) : BaseMessagePanel("Assistant", "assistant") {
 
     override fun getRoleIcon(): Icon = AllIcons.General.Balloon
@@ -39,6 +40,25 @@ class ResponseMessagePanel(
             val wrapper = JPanel()
             wrapper.isOpaque = false
             wrapper.layout = BoxLayout(wrapper, BoxLayout.Y_AXIS)
+
+            // Thinking/reasoning section (muted, smaller font, distinct color)
+            if (thinkingText.isNotBlank()) {
+                val escaped = thinkingText
+                    .replace("<", "&lt;")
+                    .replace(">", "&gt;")
+                    .replace("\n", "<br>")
+                val thinkingHtml = "<html><body style='font-family: monospace; font-size: 11px; " +
+                        "color: #888888; font-style: italic; word-wrap: break-word;'>" +
+                        "<b style='font-size: 10px; color: #999999;'>Thinking</b><br>" +
+                        escaped + "</body></html>"
+                val thinkingPane = HtmlPaneFactory.createHtmlPane(
+                    htmlBody = thinkingHtml,
+                    bgColor = background,
+                    fgColor = JBColor(0x888888, 0x777777)
+                )
+                thinkingPane.alignmentX = JPanel.LEFT_ALIGNMENT
+                wrapper.add(thinkingPane)
+            }
 
             if (project != null) {
                 // Use segment-based rendering with CodeBlockPanel for code blocks

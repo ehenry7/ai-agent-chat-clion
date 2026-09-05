@@ -79,16 +79,6 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
         onModelChange = { newModel -> settings.state.model = newModel }
     )
 
-    // Menu button (replaces separate Settings + Mode buttons)
-    private val menuBtn = JButton(AllIcons.General.Settings).apply {
-        toolTipText = "Menu"
-        isContentAreaFilled = false
-        isBorderPainted = false
-        isFocusPainted = false
-        margin = JBUI.insets(2)
-        preferredSize = Dimension(28, 28)
-        cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
-    }
     private val statusLabel = JBLabel("Ready")
 
     private val baseUrlField = JBTextField()
@@ -106,9 +96,15 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
     private val stateMachine = SessionStateMachine()
     private val commandQueue = CommandQueue()
 
+    // --- Plan manager (tool-expansion) ---
+    private val planManager = com.aiagent.chat.agent.PlanManager()
+
+    // --- Multi-provider manager (multi-provider architecture) ---
+    private val providerManager = com.aiagent.chat.model.ProviderManager()
+
     // --- Usage tracking (context/token/memory summary UI) ---
-    private val usageTracker = UsageTracker(maxContextTokens = 32768)
-    private val usageCounterPanel = UsageCounterPanel(maxContextTokens = 32768)
+    private val usageTracker = UsageTracker(maxContextTokens = settings.state.maxContextTokens.coerceAtLeast(1024))
+    private val usageCounterPanel = UsageCounterPanel(maxContextTokens = settings.state.maxContextTokens.coerceAtLeast(1024))
 
     private var todoList: List<TodoItem> = emptyList()
     private val pendingSteerMessages = java.util.concurrent.ConcurrentLinkedQueue<String>()
@@ -177,7 +173,9 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                 return result
             }
         },
-        approvalMode = approvalMode
+        approvalMode = approvalMode,
+        askQuestionsHandler = com.aiagent.chat.tools.AskQuestionsHandler(project),
+        planManager = planManager
     )
 
     init {
@@ -200,24 +198,13 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
             todoListPanel.updateItems(emptyList())
         }
 
+        conversationTabPanel.onMenuClick = { source -> showMenuPopup(source) }
+
         val chatPanel = JPanel(BorderLayout())
         chatPanel.background = JBColor.PanelBackground
 
-        // Header bar with "AI Agent Chat" title and menu button on the right
-        val headerBar = JPanel(BorderLayout()).apply {
-            isOpaque = false
-            border = JBUI.Borders.compound(
-                JBUI.Borders.customLine(ThemeUtils.SUBTLE_BORDER, 0, 0, 1, 0),
-                JBUI.Borders.empty(4, 8)
-            )
-            val titleLabel = JBLabel("AI Agent Chat").apply {
-                font = font.deriveFont(java.awt.Font.BOLD, 13f)
-            }
-            add(titleLabel, BorderLayout.WEST)
-            add(menuBtn, BorderLayout.EAST)
-        }
-        chatPanel.add(headerBar, BorderLayout.NORTH)
-
+        // No in-panel header bar — CLion's tool window tab already shows "AI Agent Chat"
+        // from plugin.xml. The menu button lives in the conversation tab bar to save space.
         chatPanel.add(conversationTabPanel, BorderLayout.CENTER)
 
         val bottomPanel = buildBottomPanel()
@@ -322,8 +309,6 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
             } catch (_: Exception) { }
         }
 
-        menuBtn.addActionListener { showMenuPopup() }
-
         ThemeUtils.onThemeChange {
             SwingUtilities.invokeLater {
                 revalidate()
@@ -332,7 +317,7 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
         }
     }
 
-    private fun showMenuPopup() {
+    private fun showMenuPopup(source: java.awt.Component) {
         val popup = JPopupMenu()
 
         val settingsItem = JMenuItem("Settings", AllIcons.General.Settings)
@@ -375,7 +360,7 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
         }
         popup.add(modeItem)
 
-        popup.show(menuBtn, 0, menuBtn.height)
+        popup.show(source, 0, source.height)
     }
 
     private fun buildSetupPanel(): JPanel {
@@ -648,10 +633,72 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
         enhancedInputPanel.updateRunningState(true)
 
         activeEngineJob = scope.launch {
+            // --- Multi-provider: load providers from settings and sync models ---
+            if (settings.isMultiProviderEnabled()) {
+                val savedProviders = settings.getProviders()
+                providerManager.clear()
+                savedProviders.forEach { p ->
+                    providerManager.addProviderOffline(p)
+                    // Try to sync models in background (non-blocking on first launch)
+                    try {
+                        val synced = providerManager.syncModels(p)
+                        providerManager.updateProvider(synced)
+                    } catch (e: Exception) {
+                        DebugLog.warn("ChatToolWindow", "Model sync failed for provider '${p.name}': ${e.message}")
+                    }
+                }
+                DebugLog.info("ChatToolWindow", "Multi-provider mode: ${providerManager.providers.size} providers, ${providerManager.allModels.size} models")
+            }
+
+            // --- Dynamic model routing: analyze task and select optimal model ---
+            var selectedModel = settings.state.model
+            var selectedBaseUrl = settings.state.baseUrl
+            var selectedApiKey = settings.getApiKey() ?: ""
+            var selectedAuthType = com.aiagent.chat.model.AuthHeaderType.BEARER
+
+            if (settings.isDynamicRoutingEnabled() && providerManager.allModels.isNotEmpty()) {
+                val complexity = com.aiagent.chat.model.ModelRouter.analyzeComplexity(promptText)
+                val routedModel = com.aiagent.chat.model.ModelRouter.selectModel(complexity, providerManager.allModels)
+                if (routedModel != null) {
+                    selectedModel = routedModel.id
+                    val provider = providerManager.findProviderForModel(routedModel.id)
+                    if (provider != null) {
+                        selectedBaseUrl = provider.baseUrl
+                        selectedApiKey = provider.apiKey
+                        selectedAuthType = provider.authHeaderType
+                    }
+                    val routingExplain = com.aiagent.chat.model.ModelRouter.explainRouting(complexity, routedModel)
+                    DebugLog.info("ChatToolWindow", "Dynamic routing: $routingExplain")
+                    SwingUtilities.invokeLater {
+                        statusLabel.text = "Routed to: ${routedModel.id} (${routedModel.sizeTag.displayName})"
+                    }
+                }
+            }
+
             val client = ApiClient(
-                baseUrl = settings.state.baseUrl,
-                apiKey = settings.getApiKey() ?: "",
-                model = settings.state.model
+                baseUrl = selectedBaseUrl,
+                apiKey = selectedApiKey,
+                model = selectedModel,
+                authHeaderType = selectedAuthType,
+                maxOutputTokens = if (settings.state.maxOutputTokens > 0) settings.state.maxOutputTokens else null
+            )
+
+            val contextCompactor = ContextCompactor(client)
+
+            // Wire up message access for compress_chat tools
+            toolHandler.contextCompactor = contextCompactor
+            toolHandler.bindMessagesAccessor(
+                getMessages = {
+                    val conv = activeConversationId?.let { conversationTabPanel.getConversation(it) } ?: conversationTabPanel.getActiveConversation()
+                    conv?.history?.toList() ?: emptyList()
+                },
+                setMessages = { newMessages ->
+                    val conv = activeConversationId?.let { conversationTabPanel.getConversation(it) } ?: conversationTabPanel.getActiveConversation()
+                    if (conv != null) {
+                        conv.history.clear()
+                        conv.history.addAll(newMessages)
+                    }
+                }
             )
 
             val engine = AgentEngine(
@@ -662,7 +709,9 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                     DebugLog.info("AgentEngine", "Tool $name completed, result length: ${result.length}")
                     result
                 },
-                contextCompactor = ContextCompactor(client),
+                contextCompactor = contextCompactor,
+                planManager = planManager,
+                providerManager = providerManager,
                 onDelta = { delta ->
                     when (delta) {
                         is AgentDelta.Status -> {
@@ -694,9 +743,7 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                             activeStreamingPanel?.appendText(delta.text)
                         }
                         is AgentDelta.StreamingReasoning -> {
-                            // Reasoning/thinking content — display in a distinct style
-                            // For now, append to streaming panel with a prefix marker
-                            activeStreamingPanel?.appendText("[thinking] ${delta.text}")
+                            activeStreamingPanel?.appendThinking(delta.text)
                         }
                         is AgentDelta.StreamingEnd -> {
                             if (delta.fullText.isNotBlank()) {

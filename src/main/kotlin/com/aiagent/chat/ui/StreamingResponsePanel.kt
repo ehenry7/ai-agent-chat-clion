@@ -25,9 +25,11 @@ class StreamingResponsePanel(
 ) : BaseMessagePanel("Assistant", "assistant") {
 
     private val textBuilder = StringBuilder()
+    private val thinkingBuilder = StringBuilder()
     private var isStreaming = true
 
     private lateinit var textPane: DynamicHeightTextPane
+    private lateinit var thinkingPane: DynamicHeightTextPane
     private lateinit var cursorLabel: JLabel
     private var cursorBlinkTimer: javax.swing.Timer? = null
 
@@ -51,6 +53,16 @@ class StreamingResponsePanel(
             border = JBUI.Borders.empty(2, 0)
         }
 
+        thinkingPane = DynamicHeightTextPane().apply {
+            contentType = "text/html"
+            editorKit = HTMLEditorKit()
+            isEditable = false
+            background = this@StreamingResponsePanel.background
+            putClientProperty(JTextPane.HONOR_DISPLAY_PROPERTIES, true)
+            border = JBUI.Borders.empty(4, 0, 2, 12)
+        }
+        thinkingPane.isVisible = false
+
         cursorLabel = JLabel("\u25AE").apply {
             font = font.deriveFont(java.awt.Font.BOLD, 13f)
             foreground = JBColor(0x0066CC, 0x4A9EFF)
@@ -58,21 +70,21 @@ class StreamingResponsePanel(
 
         startCursorBlink()
 
-        val wrapper = JPanel(BorderLayout())
+        val wrapper = JPanel()
         wrapper.isOpaque = false
+        wrapper.layout = javax.swing.BoxLayout(wrapper, javax.swing.BoxLayout.Y_AXIS)
 
-        // Text pane fills the full width (no JScrollPane wrapper -- the parent
-        // conversation already has a scroll pane, and wrapping in another one
-        // clips content and breaks width tracking).
-        wrapper.add(textPane, BorderLayout.CENTER)
+        // Thinking pane on top (smaller, muted color, italic)
+        wrapper.add(thinkingPane)
+        // Text pane below
+        wrapper.add(textPane)
 
-        // Cursor label below the text (not to the right, which steals horizontal
-        // space from the streaming content).
+        // Cursor label below the text
         val cursorPanel = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).apply {
             isOpaque = false
             add(cursorLabel)
         }
-        wrapper.add(cursorPanel, BorderLayout.SOUTH)
+        wrapper.add(cursorPanel)
 
         setBodyContent(wrapper)
     }
@@ -91,6 +103,33 @@ class StreamingResponsePanel(
     }
 
     /**
+     * Append a thinking/reasoning chunk and render it in a distinct muted style.
+     * Must be called on the EDT.
+     */
+    fun appendThinking(text: String) {
+        SwingUtilities.invokeLater {
+            if (!isStreaming) return@invokeLater
+            thinkingBuilder.append(text)
+            renderThinkingHtml()
+            scrollParentToBottom()
+        }
+    }
+
+    private fun renderThinkingHtml() {
+        if (thinkingBuilder.isEmpty()) return
+        thinkingPane.isVisible = true
+        val escaped = thinkingBuilder.toString()
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace("\n", "<br>")
+        thinkingPane.text = "<html><body style='font-family: monospace; font-size: 11px; " +
+                "color: #888888; font-style: italic; word-wrap: break-word;'>" +
+                "<b style='font-size: 10px; color: #999999;'>Thinking</b><br>" +
+                escaped + "</body></html>"
+        thinkingPane.revalidate()
+    }
+
+    /**
      * Finalize streaming: stop the cursor blink and replace this panel
      * with a full ResponseMessagePanel in the parent container.
      * Returns the replacement panel (or null if parent is not available).
@@ -102,7 +141,8 @@ class StreamingResponsePanel(
         }
 
         val fullText = textBuilder.toString()
-        val replacement = ResponseMessagePanel(fullText, project)
+        val thinkingText = thinkingBuilder.toString()
+        val replacement = ResponseMessagePanel(fullText, project, thinkingText)
 
         SwingUtilities.invokeLater {
             val parent = parent

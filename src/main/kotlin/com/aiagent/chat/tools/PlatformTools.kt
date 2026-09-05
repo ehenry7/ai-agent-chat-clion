@@ -33,9 +33,25 @@ class PlatformToolHandler(
     val getTodoList: () -> List<com.aiagent.chat.model.TodoItem>,
     val setTodoList: (List<com.aiagent.chat.model.TodoItem>) -> Unit,
     val approvalHandler: ApprovalHandler? = null,
-    var approvalMode: com.aiagent.chat.model.ApprovalMode = com.aiagent.chat.model.ApprovalMode.BALANCED
+    var approvalMode: com.aiagent.chat.model.ApprovalMode = com.aiagent.chat.model.ApprovalMode.BALANCED,
+    val undoStack: UndoStack = UndoStack(),
+    val commandSafety: CommandSafety = CommandSafety(),
+    val askQuestionsHandler: AskQuestionsHandler? = null,
+    val planManager: com.aiagent.chat.agent.PlanManager? = null,
+    var contextCompactor: com.aiagent.chat.agent.ContextCompactor? = null,
+    var getMessages: (() -> List<com.aiagent.chat.model.ChatMessage>)? = null,
+    var setMessages: ((List<com.aiagent.chat.model.ChatMessage>) -> Unit)? = null
 ) {
     private val httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(15)).build()
+
+    /** Late-bind message accessors for compress_chat tools (set after construction from the UI layer). */
+    fun bindMessagesAccessor(
+        getMessages: () -> List<com.aiagent.chat.model.ChatMessage>,
+        setMessages: (List<com.aiagent.chat.model.ChatMessage>) -> Unit
+    ) {
+        this.getMessages = getMessages
+        this.setMessages = setMessages
+    }
 
     /**
      * Interface for non-blocking tool approval.
@@ -92,6 +108,10 @@ class PlatformToolHandler(
         ApplicationManager.getApplication().invokeAndWait {
             WriteCommandAction.runWriteCommandAction(project) {
                 val file = resolveContainedFile(relPath)
+                // Push undo snapshot if file already exists
+                if (file.exists()) {
+                    undoStack.push(relPath, file.readText(StandardCharsets.UTF_8))
+                }
                 file.parentFile.mkdirs()
                 file.writeText(content, StandardCharsets.UTF_8)
                 VfsUtil.markDirtyAndRefresh(false, true, true, VfsUtil.findFileByIoFile(file, true))
@@ -115,6 +135,8 @@ class PlatformToolHandler(
                     result = "Error: Search string not found in $relPath"
                     return@runWriteCommandAction
                 }
+                // Push undo snapshot before editing
+                undoStack.push(relPath, raw)
                 val updated = if (replaceAll) raw.replace(search, replace) else raw.replaceFirst(search, replace)
                 file.writeText(updated, StandardCharsets.UTF_8)
                 VfsUtil.markDirtyAndRefresh(false, true, true, VfsUtil.findFileByIoFile(file, true))
@@ -168,18 +190,31 @@ class PlatformToolHandler(
     }
 
     fun runCommand(command: String): String {
-        // S2: Basic command sanitization — block dangerous patterns
-        val dangerousPatterns = listOf(
-            Regex("rm\\s+-rf\\s+/", RegexOption.IGNORE_CASE),
-            Regex("mkfs\\.", RegexOption.IGNORE_CASE),
-            Regex("dd\\s+if=", RegexOption.IGNORE_CASE),
-            Regex(":\\(\\)\\s*\\{.*\\}\\s*;\\s*:", RegexOption.IGNORE_CASE), // fork bomb
-            Regex("shutdown", RegexOption.IGNORE_CASE),
-            Regex("reboot", RegexOption.IGNORE_CASE)
-        )
-        for (pattern in dangerousPatterns) {
-            if (pattern.containsMatchIn(command)) {
-                return "Error: Command blocked by security policy (matched: ${pattern.pattern})"
+        // Layer 3: CommandSafety glob pattern check (deny/confirm patterns)
+        val safetyDecision = commandSafety.evaluate(command)
+        if (safetyDecision == CommandSafety.Decision.DENY) {
+            return "Error: Command blocked by security policy (deny pattern matched). Command: $command"
+        }
+        if (safetyDecision == CommandSafety.Decision.CONFIRM) {
+            // Force confirmation even in AUTOPILOT mode
+            if (approvalHandler != null) {
+                val result = approvalHandler.requestApproval("run_command (safety)", command, ToolCategory.DANGEROUS)
+                if (!result.approved) {
+                    val reason = result.denyReason ?: "User denied safety confirmation"
+                    return "Tool call denied by user (safety confirmation). Reason: $reason"
+                }
+            } else {
+                var approved = false
+                ApplicationManager.getApplication().invokeAndWait {
+                    val res = Messages.showYesNoDialog(
+                        project,
+                        "Safety confirmation required for command:\n$command\n\nAllow this operation?",
+                        "Command Safety Confirmation",
+                        Messages.getWarningIcon()
+                    )
+                    approved = (res == Messages.YES)
+                }
+                if (!approved) return "Tool call denied by user (safety confirmation)."
             }
         }
 
@@ -280,6 +315,153 @@ class PlatformToolHandler(
             }
         }
         return result.ifBlank { "Formatting failed: could not resolve file or PSI." }
+    }
+
+    // === New tool methods (tool-expansion) ===
+
+    fun tree(relPath: String, maxDepth: Int = 3, includeHidden: Boolean = false): String {
+        val baseDir = project.basePath ?: return "No project root"
+        val root = if (relPath.isBlank() || relPath == ".") File(baseDir) else resolveContainedFile(relPath)
+        return TreeBuilder.buildTree(root, maxDepth, includeHidden)
+    }
+
+    fun rm(relPath: String, recursive: Boolean = false, dryRun: Boolean = false): String {
+        val file = resolveContainedFile(relPath)
+        if (!file.exists()) return "Error: File not found: $relPath"
+
+        if (dryRun) {
+            val entries = if (file.isDirectory && recursive) {
+                file.walkTopDown().count()
+            } else if (file.isDirectory) {
+                file.listFiles()?.size ?: 0
+            } else 1
+            return "[dry_run] Would delete: $relPath ($entries item(s))"
+        }
+
+        if (file.isDirectory) {
+            if (!recursive && (file.listFiles()?.isNotEmpty() == true)) {
+                return "Error: Directory not empty. Use recursive=true to delete non-empty directories."
+            }
+            val deleted = file.deleteRecursively()
+            return if (deleted) "Deleted directory: $relPath" else "Error: Failed to delete directory: $relPath"
+        } else {
+            val deleted = file.delete()
+            return if (deleted) "Deleted file: $relPath" else "Error: Failed to delete file: $relPath"
+        }
+    }
+
+    fun mv(source: String, destination: String, overwrite: Boolean = false): String {
+        val srcFile = resolveContainedFile(source)
+        if (!srcFile.exists()) return "Error: Source not found: $source"
+        val destFile = resolveContainedFile(destination)
+        if (destFile.exists() && !overwrite) {
+            return "Error: Destination already exists: $destination. Use overwrite=true to replace."
+        }
+        destFile.parentFile.mkdirs()
+        val moved = srcFile.renameTo(destFile)
+        return if (moved) "Moved $source -> $destination" else "Error: Failed to move $source to $destination"
+    }
+
+    fun updateTextdocByLines(relPath: String, startLine: Int, endLine: Int, content: String): String {
+        var result = ""
+        ApplicationManager.getApplication().invokeAndWait {
+            WriteCommandAction.runWriteCommandAction(project) {
+                val file = resolveContainedFile(relPath)
+                if (!file.exists()) {
+                    result = "Error: File not found: $relPath"
+                    return@runWriteCommandAction
+                }
+                // Push undo snapshot
+                undoStack.push(relPath, file.readText(StandardCharsets.UTF_8))
+
+                val lines = file.readLines(StandardCharsets.UTF_8).toMutableList()
+                val s = (startLine - 1).coerceAtLeast(0)
+                val e = endLine.coerceAtMost(lines.size)
+                if (s >= e) {
+                    result = "Error: startLine must be <= endLine"
+                    return@runWriteCommandAction
+                }
+                val newLines = content.split("\n")
+                lines.subList(s, e).clear()
+                lines.addAll(s, newLines)
+                file.writeText(lines.joinToString("\n"), StandardCharsets.UTF_8)
+                VfsUtil.markDirtyAndRefresh(false, true, true, VfsUtil.findFileByIoFile(file, true))
+                result = "Updated lines $startLine-$endLine in $relPath (replaced with ${newLines.size} line(s))"
+            }
+        }
+        return result
+    }
+
+    fun undoTextdoc(relPath: String?): String {
+        val snapshot = if (relPath != null && relPath.isNotBlank()) {
+            undoStack.popForPath(relPath)
+        } else {
+            undoStack.pop()
+        }
+        if (snapshot == null) return "Error: No undo history available"
+
+        var result = ""
+        ApplicationManager.getApplication().invokeAndWait {
+            WriteCommandAction.runWriteCommandAction(project) {
+                val file = resolveContainedFile(snapshot.path)
+                file.writeText(snapshot.content, StandardCharsets.UTF_8)
+                VfsUtil.markDirtyAndRefresh(false, true, true, VfsUtil.findFileByIoFile(file, true))
+                result = "Reverted ${snapshot.path} to previous content (${snapshot.content.length} chars)"
+            }
+        }
+        return result
+    }
+
+    fun askQuestions(question: String, questionType: String, options: List<String>): String {
+        val handler = askQuestionsHandler ?: return "Error: Question handler not available"
+        val q = AskQuestionsHandler.Question(question, questionType, options)
+        val answer = handler.ask(q)
+        return "Q: ${answer.question}\nA: ${answer.answer}"
+    }
+
+    fun sleep(seconds: Double): String {
+        Thread.sleep((seconds * 1000).toLong())
+        return "Slept for $seconds seconds."
+    }
+
+    fun compressChatProbe(): String {
+        val compactor = contextCompactor ?: return "Error: Context compactor not available"
+        val messages = getMessages?.invoke() ?: return "Error: Cannot access message history"
+        val needsCompaction = compactor.needsCompaction(messages)
+        val conversationMessages = messages.size - 1
+        return "Message count: $conversationMessages\nCompaction needed: $needsCompaction\nThreshold: ${com.aiagent.chat.agent.ContextCompactor.COMPACTION_THRESHOLD} messages"
+    }
+
+    fun compressChatApply(): String {
+        val compactor = contextCompactor ?: return "Error: Context compactor not available"
+        val messages = getMessages?.invoke() ?: return "Error: Cannot access message history"
+        if (!compactor.needsCompaction(messages)) {
+            return "Compaction not needed yet (message count below threshold)."
+        }
+        val sizeBefore = messages.size
+        val compacted = kotlinx.coroutines.runBlocking { compactor.compact(messages) }
+        val sizeAfter = compacted.size
+        setMessages?.invoke(compacted)
+        return "Context compacted: $sizeBefore -> $sizeAfter messages."
+    }
+
+    fun setPlan(planMarkdown: String): String {
+        val pm = planManager ?: return "Error: Plan manager not available"
+        pm.setPlanFromMarkdown(planMarkdown)
+        val plan = pm.getPlan()
+        return "Plan set: '${plan?.title}' with ${plan?.steps?.size ?: 0} steps."
+    }
+
+    fun getPlan(): String {
+        val pm = planManager ?: return "Error: Plan manager not available"
+        val plan = pm.getPlan() ?: return "No plan set. Use set_plan to create one."
+        return plan.toMarkdown()
+    }
+
+    fun updatePlan(stepId: String, status: String): String {
+        val pm = planManager ?: return "Error: Plan manager not available"
+        val updated = pm.updateStep(stepId, status)
+        return if (updated) "Updated step '$stepId' to status '$status'." else "Error: Step '$stepId' not found in current plan."
     }
 
     fun execute(name: String, args: JsonObject): String {
@@ -401,6 +583,47 @@ class PlatformToolHandler(
             }
             "get_active_editor" -> getActiveEditor()
             "format_document" -> formatDocument(args["path"]?.jsonPrimitive?.content ?: "")
+            // === New tools (tool-expansion) ===
+            "tree" -> tree(
+                args["path"]?.jsonPrimitive?.content ?: "",
+                args["maxDepth"]?.jsonPrimitive?.intOrNull ?: 3,
+                args["includeHidden"]?.jsonPrimitive?.booleanOrNull ?: false
+            )
+            "rm" -> rm(
+                args["path"]?.jsonPrimitive?.content ?: "",
+                args["recursive"]?.jsonPrimitive?.booleanOrNull ?: false,
+                args["dry_run"]?.jsonPrimitive?.booleanOrNull ?: false
+            )
+            "mv" -> mv(
+                args["source"]?.jsonPrimitive?.content ?: "",
+                args["destination"]?.jsonPrimitive?.content ?: "",
+                args["overwrite"]?.jsonPrimitive?.booleanOrNull ?: false
+            )
+            "update_textdoc_by_lines" -> updateTextdocByLines(
+                args["path"]?.jsonPrimitive?.content ?: "",
+                args["startLine"]?.jsonPrimitive?.intOrNull ?: 1,
+                args["endLine"]?.jsonPrimitive?.intOrNull ?: 1,
+                args["content"]?.jsonPrimitive?.content ?: ""
+            )
+            "undo_textdoc" -> {
+                val pathArg = args["path"]
+                val pathStr = if (pathArg != null && pathArg !is kotlinx.serialization.json.JsonNull) pathArg.jsonPrimitive.content else null
+                undoTextdoc(pathStr)
+            }
+            "ask_questions" -> askQuestions(
+                args["question"]?.jsonPrimitive?.content ?: "",
+                args["question_type"]?.jsonPrimitive?.content ?: "free_text",
+                args["options"]?.jsonArray?.mapNotNull { it.jsonPrimitive.contentOrNull } ?: emptyList()
+            )
+            "sleep" -> sleep(args["seconds"]?.jsonPrimitive?.doubleOrNull ?: 1.0)
+            "compress_chat_probe" -> compressChatProbe()
+            "compress_chat_apply" -> compressChatApply()
+            "set_plan" -> setPlan(args["plan"]?.jsonPrimitive?.content ?: "")
+            "get_plan" -> getPlan()
+            "update_plan" -> updatePlan(
+                args["step_id"]?.jsonPrimitive?.content ?: "",
+                args["status"]?.jsonPrimitive?.content ?: "pending"
+            )
             else -> "Unknown tool: $name"
         }
     }

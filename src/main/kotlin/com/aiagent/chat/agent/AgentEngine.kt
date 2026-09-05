@@ -37,7 +37,9 @@ class AgentEngine(
     private val onDelta: (AgentDelta) -> Unit,
     private val stateMachine: SessionStateMachine = SessionStateMachine(),
     private val commandQueue: CommandQueue = CommandQueue(),
-    private val contextCompactor: ContextCompactor? = null
+    private val contextCompactor: ContextCompactor? = null,
+    val planManager: PlanManager = PlanManager(),
+    val providerManager: ProviderManager? = null
 ) {
     companion object {
         const val RECENT_WINDOW_MESSAGES = 8
@@ -560,7 +562,13 @@ class AgentEngine(
                 "Current phase: '$phase'. In 'discovery', you only have read-only tools to explore the codebase. " +
                 "Once you understand the task, use 'request_phase_change' with target_phase='execution' to unlock mutation tools.\n" +
                 "If a tool call is denied by the user, respect the denial reason and adjust your approach accordingly.\n" +
+                "Use set_plan to create a structured task plan, get_plan to check it, and update_plan to mark steps as completed.\n" +
+                "Use compress_chat_probe to check if context is getting long, and compress_chat_apply to compact it.\n" +
+                "Use ask_questions to ask the user structured questions when you need clarification.\n" +
+                "Use undo_textdoc to revert the last file edit if you made a mistake.\n" +
                 (if (globalMem.isNotBlank()) "\n<agent_global_memory>\n$globalMem\n</agent_global_memory>" else "") +
-                (if (memory.isNotBlank()) "\n<agent_memory>\n$memory\n</agent_memory>" else "")
+                (if (memory.isNotBlank()) "\n<agent_memory>\n$memory\n</agent_memory>" else "") +
+                planManager.toSystemPromptSection() +
+                (providerManager?.toSystemPromptSection() ?: "")
     }
 }

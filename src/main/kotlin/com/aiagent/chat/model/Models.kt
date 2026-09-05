@@ -122,7 +122,9 @@ data class ChatCompletionRequest(
     val model: String,
     val messages: List<ChatMessage>,
     val tools: List<ToolDefinition>? = null,
-    val stream: Boolean = false
+    val stream: Boolean = false,
+    @SerialName("max_tokens") val maxTokens: Int? = null,
+    @SerialName("max_completion_tokens") val maxCompletionTokens: Int? = null
 )
 
 // --- Streaming models (Phase 9) ---

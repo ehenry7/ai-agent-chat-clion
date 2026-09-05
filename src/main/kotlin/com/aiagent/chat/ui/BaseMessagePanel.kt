@@ -33,6 +33,8 @@ abstract class BaseMessagePanel(
 
     private var bodyComponent: JComponent? = null
 
+    private var isCollapsed = false
+
     init {
         border = JBUI.Borders.compound(
             JBUI.Borders.customLine(JBColor.border(), 1),
@@ -72,6 +74,24 @@ abstract class BaseMessagePanel(
     }
 
     private fun buildActions() {
+        val toggleBtn = JButton(AllIcons.General.ChevronDown).apply {
+            toolTipText = "Shrink"
+            isContentAreaFilled = false
+            isBorderPainted = false
+            isFocusPainted = false
+            margin = JBUI.insets(2)
+            cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
+            addMouseListener(object : MouseAdapter() {
+                override fun mousePressed(e: MouseEvent) {
+                    isCollapsed = !isCollapsed
+                    icon = if (isCollapsed) AllIcons.General.ChevronRight else AllIcons.General.ChevronDown
+                    toolTipText = if (isCollapsed) "Expand" else "Shrink"
+                    bodyContainer.isVisible = !isCollapsed
+                    revalidate()
+                    repaint()
+                }
+            })
+        }
         val copyBtn = createActionButton(AllIcons.Actions.Copy, "Copy") {
             copyToClipboard()
         }
@@ -80,6 +100,7 @@ abstract class BaseMessagePanel(
             parent?.revalidate()
             parent?.repaint()
         }
+        actionsPanel.add(toggleBtn)
         actionsPanel.add(copyBtn)
         actionsPanel.add(deleteBtn)
         actionsPanel.isOpaque = false
