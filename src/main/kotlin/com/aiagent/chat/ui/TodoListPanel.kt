@@ -67,8 +67,7 @@ class TodoListPanel(
         leftPanel.add(iconLabel)
         leftPanel.add(titleLabel)
 
-        val expandLabel = JBLabel("[+]").apply {
-            font = font.deriveFont(11f)
+        val expandLabel = JBLabel(AllIcons.General.ChevronDown).apply {
             foreground = JBColor(0x666666, 0x999999)
         }
 
@@ -78,7 +77,7 @@ class TodoListPanel(
         headerPanel.addMouseListener(object : MouseAdapter() {
             override fun mouseClicked(e: MouseEvent) {
                 isExpanded = !isExpanded
-                expandLabel.text = if (isExpanded) "[-]" else "[+]"
+                expandLabel.icon = if (isExpanded) AllIcons.General.ChevronUp else AllIcons.General.ChevronDown
                 updateVisibility()
                 revalidate()
                 repaint()

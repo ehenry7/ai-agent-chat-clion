@@ -206,8 +206,8 @@ class DynamicHeightTextPane : JTextPane() {
             val rootView = textUi.getRootView(this)
             rootView.setSize(targetWidth.toFloat(), Short.MAX_VALUE.toFloat())
             val span = rootView.getPreferredSpan(View.Y_AXIS)
-            // Add 2px breathing room so the last line is never clipped.
-            measuredHeight = (span + 2f).toInt().coerceAtLeast(24)
+            // Add 6px breathing room so the last line is never clipped.
+            measuredHeight = (span + 6f).toInt().coerceAtLeast(24)
             measuredWidth = targetWidth
             com.aiagent.chat.debug.DebugLog.info("DynamicHeightTextPane", "reMeasure(targetWidth=$targetWidth): rootView=${rootView.javaClass.simpleName}, span(Y)=$span -> measuredHeight=$measuredHeight, docLen=${document.length}")
         } finally {

@@ -29,7 +29,7 @@ abstract class BaseMessagePanel(
 
     protected val headerPanel: JPanel = JPanel(BorderLayout())
     protected val bodyContainer: JPanel = JPanel(BorderLayout())
-    protected val actionsPanel: JPanel = JPanel(FlowLayout(FlowLayout.RIGHT, 2, 0))
+    protected val actionsPanel: JPanel = JPanel(FlowLayout(FlowLayout.RIGHT, 0, 0))
 
     private var bodyComponent: JComponent? = null
 
@@ -38,7 +38,7 @@ abstract class BaseMessagePanel(
     init {
         border = JBUI.Borders.compound(
             JBUI.Borders.customLine(JBColor.border(), 1),
-            JBUI.Borders.empty(8, 12)
+            JBUI.Borders.empty(8, 12, 10, 12)
         )
         background = getBubbleBackground()
 
@@ -74,12 +74,16 @@ abstract class BaseMessagePanel(
     }
 
     private fun buildActions() {
+        val copyBtn = createActionButton(AllIcons.Actions.Copy, "Copy") {
+            copyToClipboard()
+        }
         val toggleBtn = JButton(AllIcons.General.ChevronDown).apply {
             toolTipText = "Shrink"
             isContentAreaFilled = false
             isBorderPainted = false
             isFocusPainted = false
             margin = JBUI.insets(2)
+            preferredSize = java.awt.Dimension(24, 24)
             cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
             addMouseListener(object : MouseAdapter() {
                 override fun mousePressed(e: MouseEvent) {
@@ -92,16 +96,14 @@ abstract class BaseMessagePanel(
                 }
             })
         }
-        val copyBtn = createActionButton(AllIcons.Actions.Copy, "Copy") {
-            copyToClipboard()
-        }
         val deleteBtn = createActionButton(AllIcons.Actions.Close, "Remove") {
             isVisible = false
             parent?.revalidate()
             parent?.repaint()
         }
-        actionsPanel.add(toggleBtn)
+        // Order: Copy (leftmost), Toggle, Delete
         actionsPanel.add(copyBtn)
+        actionsPanel.add(toggleBtn)
         actionsPanel.add(deleteBtn)
         actionsPanel.isOpaque = false
     }
@@ -113,6 +115,7 @@ abstract class BaseMessagePanel(
             isBorderPainted = false
             isFocusPainted = false
             margin = JBUI.insets(2)
+            preferredSize = java.awt.Dimension(24, 24)
             cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
             addMouseListener(object : MouseAdapter() {
                 override fun mousePressed(e: MouseEvent) {

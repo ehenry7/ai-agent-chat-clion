@@ -10,7 +10,6 @@ import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.vfs.VfsUtil
 import com.intellij.psi.PsiManager
 import com.intellij.psi.codeStyle.CodeStyleManager
@@ -204,17 +203,8 @@ class PlatformToolHandler(
                     return "Tool call denied by user (safety confirmation). Reason: $reason"
                 }
             } else {
-                var approved = false
-                ApplicationManager.getApplication().invokeAndWait {
-                    val res = Messages.showYesNoDialog(
-                        project,
-                        "Safety confirmation required for command:\n$command\n\nAllow this operation?",
-                        "Command Safety Confirmation",
-                        Messages.getWarningIcon()
-                    )
-                    approved = (res == Messages.YES)
-                }
-                if (!approved) return "Tool call denied by user (safety confirmation)."
+                // No inline approval handler available — deny by default, never show external dialogs
+                return "Tool call denied (no approval handler available). Command: $command"
             }
         }
 
@@ -481,18 +471,8 @@ class PlatformToolHandler(
                     autoApprovedTools.add(name)
                 }
             } else {
-                // Fallback: blocking dialog (legacy behavior)
-                var approved = false
-                ApplicationManager.getApplication().invokeAndWait {
-                    val res = Messages.showYesNoDialog(
-                        project,
-                        "Agent wants to execute $name (category: $category).\nArgs: $args\n\nAllow this operation?",
-                        "Tool Execution Request",
-                        Messages.getQuestionIcon()
-                    )
-                    approved = (res == Messages.YES)
-                }
-                if (!approved) return "Tool call denied by user. Reason: User rejected in dialog."
+                // No inline approval handler available — deny by default, never show external dialogs
+                return "Tool call denied (no approval handler available). Tool: $name"
             }
         }
 

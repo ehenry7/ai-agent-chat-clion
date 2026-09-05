@@ -3,7 +3,6 @@ package com.aiagent.chat.ui
 import com.aiagent.chat.model.ChatMessage
 import com.aiagent.chat.model.UiLogEntry
 import com.intellij.icons.AllIcons
-import com.intellij.openapi.ui.Messages
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBPanel
@@ -42,9 +41,13 @@ class ConversationTabPanel : JBPanel<ConversationTabPanel>(BorderLayout()) {
 
     private var nextId = 1
 
+    private var modelStatusButton: JButton? = null
+
     var onTabChanged: ((String?) -> Unit)? = null
     var onNewTab: (() -> Unit)? = null
     var onMenuClick: ((java.awt.Component) -> Unit)? = null
+    var onModelStatusClick: ((java.awt.Component) -> Unit)? = null
+    var onRenameRequest: ((java.awt.Component) -> Unit)? = null
 
     init {
         border = JBUI.Borders.empty()
@@ -63,14 +66,15 @@ class ConversationTabPanel : JBPanel<ConversationTabPanel>(BorderLayout()) {
             add(tabScroll, BorderLayout.CENTER)
             val rightButtonsPanel = JPanel(FlowLayout(FlowLayout.RIGHT, 2, 0)).apply {
                 isOpaque = false
-                add(createIconButton(AllIcons.Actions.MoreHorizontal, "Menu") {
-                    onMenuClick?.invoke(it)
-                })
-                add(createIconButton(AllIcons.Actions.New, "New Session") {
+                // Model status button (shows current model + phase)
+                add(createModelStatusButton())
+                // + button for new session
+                add(createIconButton(AllIcons.General.Add, "New Session") {
                     onNewTab?.invoke()
                 })
-                add(createIconButton(AllIcons.General.Information, "Session Info") {
-                    showSessionInfo()
+                // Dropdown arrow for more actions (info, rename, settings)
+                add(createIconButton(createDropdownArrowIcon(), "More Actions") { source ->
+                    showMoreActionsPopup(source)
                 })
             }
             add(rightButtonsPanel, BorderLayout.EAST)
@@ -211,9 +215,94 @@ class ConversationTabPanel : JBPanel<ConversationTabPanel>(BorderLayout()) {
     }
 
     /**
-     * Shows a popup with details about the active session.
+     * Creates a model status button that shows the current model name.
      */
-    private fun showSessionInfo() {
+    private fun createModelStatusButton(): JButton {
+        return JButton("Model").apply {
+            toolTipText = "Model status — click for details"
+            isContentAreaFilled = false
+            isBorderPainted = true
+            isFocusPainted = false
+            margin = JBUI.insets(2, 6)
+            preferredSize = Dimension(80, 24)
+            font = font.deriveFont(java.awt.Font.PLAIN, 10f)
+            foreground = JBColor(0x666666, 0xBBBBBB)
+            cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
+            addActionListener { e -> onModelStatusClick?.invoke(e.source as java.awt.Component) }
+            modelStatusButton = this
+        }
+    }
+
+    /**
+     * Updates the model status button text.
+     */
+    fun updateModelStatus(modelName: String) {
+        SwingUtilities.invokeLater {
+            modelStatusButton?.text = modelName.take(12)
+            modelStatusButton?.toolTipText = "Model: $modelName — click for details"
+        }
+    }
+
+    /**
+     * Creates a dropdown arrow icon (small triangle pointing down).
+     */
+    private fun createDropdownArrowIcon(): Icon {
+        return object : Icon {
+            override fun getIconWidth(): Int = 16
+            override fun getIconHeight(): Int = 16
+            override fun paintIcon(c: java.awt.Component?, g: java.awt.Graphics, x: Int, y: Int) {
+                val g2 = g.create() as java.awt.Graphics2D
+                try {
+                    g2.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON)
+                    g2.color = JBColor(0x666666, 0xBBBBBB)
+                    // Draw a downward triangle (dropdown arrow)
+                    val midX = x + 8
+                    val topY = y + 4
+                    val botY = y + 12
+                    g2.fillPolygon(intArrayOf(midX - 4, midX + 4, midX), intArrayOf(topY, topY, botY), 3)
+                } finally {
+                    g2.dispose()
+                }
+            }
+        }
+    }
+
+    /**
+     * Shows a popup with "more actions": Session Info, Rename Session, Settings/Menu.
+     */
+    private fun showMoreActionsPopup(source: java.awt.Component) {
+        val popup = javax.swing.JPopupMenu()
+
+        // Session Info
+        val infoItem = javax.swing.JMenuItem("Session Info", AllIcons.General.Information)
+        infoItem.addActionListener {
+            showSessionInfo(source)
+        }
+        popup.add(infoItem)
+
+        // Rename Session (via callback to parent)
+        val renameItem = javax.swing.JMenuItem("Rename Session", AllIcons.Actions.Edit)
+        renameItem.addActionListener {
+            onRenameRequest?.invoke(source)
+        }
+        popup.add(renameItem)
+
+        // Settings / Menu (full menu from parent)
+        popup.addSeparator()
+
+        val settingsItem = javax.swing.JMenuItem("Settings & Menu", AllIcons.General.Settings)
+        settingsItem.addActionListener {
+            onMenuClick?.invoke(source)
+        }
+        popup.add(settingsItem)
+
+        popup.show(source, 0, source.height)
+    }
+
+    /**
+     * Shows a popup with details about the active session, positioned near the source button.
+     */
+    private fun showSessionInfo(source: java.awt.Component) {
         val conv = getActiveConversation()
         val popup = JPopupMenu()
         if (conv == null) {
@@ -224,7 +313,7 @@ class ConversationTabPanel : JBPanel<ConversationTabPanel>(BorderLayout()) {
             popup.add(JLabel("History: ${conv.history.size} messages"))
             popup.add(JLabel("UI Log: ${conv.uiLog.size} entries"))
         }
-        popup.show(this, 0, 0)
+        popup.show(source, 0, source.height)
     }
 
     /**
@@ -312,21 +401,11 @@ class ConversationTabPanel : JBPanel<ConversationTabPanel>(BorderLayout()) {
                     val popup = JPopupMenu()
                     val renameItem = JMenuItem("Rename Tab")
                     renameItem.addActionListener {
-                        val newName = Messages.showInputDialog(
-                            null,
-                            "Enter new tab name:",
-                            "Rename Conversation",
-                            null,
-                            titleText,
-                            null
-                        )
-                        if (newName != null && newName.isNotBlank()) {
-                            var parent = parent
-                            while (parent != null && parent !is ConversationTabPanel) {
-                                parent = parent.parent
-                            }
-                            (parent as? ConversationTabPanel)?.renameConversation(tabId, newName.trim())
+                        var parent = parent
+                        while (parent != null && parent !is ConversationTabPanel) {
+                            parent = parent.parent
                         }
+                        (parent as? ConversationTabPanel)?.onRenameRequest?.invoke(this@TabButton)
                     }
                     val closeItem = JMenuItem("Close Tab")
                     closeItem.addActionListener {

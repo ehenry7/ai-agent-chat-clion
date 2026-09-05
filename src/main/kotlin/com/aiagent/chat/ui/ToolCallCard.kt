@@ -82,8 +82,7 @@ class ToolCallCard(
 
         header.add(leftPanel, BorderLayout.WEST)
 
-        val expandLabel = JBLabel("[+]").apply {
-            font = font.deriveFont(11f)
+        val expandLabel = JBLabel(AllIcons.General.ChevronDown).apply {
             foreground = JBColor(0x666666, 0x999999)
         }
         header.add(expandLabel, BorderLayout.EAST)
@@ -93,7 +92,7 @@ class ToolCallCard(
             override fun mouseClicked(e: MouseEvent) {
                 isExpanded = !isExpanded
                 contentArea.isVisible = isExpanded
-                expandLabel.text = if (isExpanded) "[-]" else "[+]"
+                expandLabel.icon = if (isExpanded) AllIcons.General.ChevronUp else AllIcons.General.ChevronDown
                 revalidate()
                 repaint()
                 parent?.revalidate()
