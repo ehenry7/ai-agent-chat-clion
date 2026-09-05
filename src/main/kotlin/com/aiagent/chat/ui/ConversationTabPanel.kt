@@ -48,6 +48,8 @@ class ConversationTabPanel : JBPanel<ConversationTabPanel>(BorderLayout()) {
     var onMenuClick: ((java.awt.Component) -> Unit)? = null
     var onModelStatusClick: ((java.awt.Component) -> Unit)? = null
     var onRenameRequest: ((java.awt.Component) -> Unit)? = null
+    /** Called when the last remaining tab is closed — parent should show the landing screen. */
+    var onLastTabClosed: (() -> Unit)? = null
 
     init {
         border = JBUI.Borders.empty()
@@ -162,8 +164,6 @@ class ConversationTabPanel : JBPanel<ConversationTabPanel>(BorderLayout()) {
     fun getConversation(tabId: String): Conversation? = conversations[tabId]
 
     fun closeConversation(tabId: String) {
-        if (conversations.size <= 1) return // Keep at least one tab
-
         val conv = conversations.remove(tabId)
         if (conv != null) {
             contentPanel.remove(conv.scrollPane)
@@ -183,6 +183,7 @@ class ConversationTabPanel : JBPanel<ConversationTabPanel>(BorderLayout()) {
             } else {
                 activeTabId = null
                 onTabChanged?.invoke(null)
+                onLastTabClosed?.invoke()
             }
         }
 

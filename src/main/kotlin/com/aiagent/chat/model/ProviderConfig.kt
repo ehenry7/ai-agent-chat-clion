@@ -53,7 +53,9 @@ data class ModelInfo(
     val providerId: String,
     val providerName: String = "",
     val sizeTag: ModelSize = ModelSize.MEDIUM,
-    val costTag: ModelCost = ModelCost.LOW_COST
+    val costTag: ModelCost = ModelCost.LOW_COST,
+    val maxContextTokens: Int = 32768,
+    val maxOutputTokens: Int = 4096
 ) {
     val displayName: String get() = if (providerName.isNotBlank()) "$id ($providerName)" else id
 }
