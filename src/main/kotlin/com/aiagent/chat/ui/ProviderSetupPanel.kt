@@ -106,6 +106,10 @@ class ProviderSetupPanel(
     // --- Currently selected provider for model table display ---
     private var selectedProviderId: String? = null
 
+    // --- Scroll pane references for dynamic sizing ---
+    private var providerTableScroll: JBScrollPane? = null
+    private var modelTableScroll: JBScrollPane? = null
+
     // --- Provider edit popup fields ---
     private val popupNameField = JBTextField()
     private val popupUrlField = JBTextField()
@@ -235,8 +239,6 @@ class ProviderSetupPanel(
             JBUI.Borders.customLine(JBColor.border(), 1),
             JBUI.Borders.empty(6)
         )
-        // Size to content, do not stretch
-        outer.maximumSize = java.awt.Dimension(Int.MAX_VALUE, outer.preferredSize.height)
 
         // Title row with buttons
         val titleRow = JPanel(BorderLayout()).apply { isOpaque = false }
@@ -259,11 +261,13 @@ class ProviderSetupPanel(
         titleRow.add(btnPanel, BorderLayout.EAST)
         outer.add(titleRow, BorderLayout.NORTH)
 
-        // Provider table in scroll
+        // Provider table in scroll — sized dynamically to content
         val tableScroll = JBScrollPane(providerTable).apply {
             border = JBUI.Borders.empty()
-            preferredSize = java.awt.Dimension(0, 100)
+            horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
+            verticalScrollBarPolicy = ScrollPaneConstants.VERTICAL_SCROLLBAR_NEVER
         }
+        providerTableScroll = tableScroll
         outer.add(tableScroll, BorderLayout.CENTER)
 
         return outer
@@ -275,8 +279,6 @@ class ProviderSetupPanel(
             JBUI.Borders.customLine(JBColor.border(), 1),
             JBUI.Borders.empty(6)
         )
-        // Size to content, do not stretch
-        outer.maximumSize = java.awt.Dimension(Int.MAX_VALUE, outer.preferredSize.height)
 
         // Title row with buttons
         val titleRow = JPanel(BorderLayout()).apply { isOpaque = false }
@@ -303,11 +305,13 @@ class ProviderSetupPanel(
         titleRow.add(btnPanel, BorderLayout.EAST)
         outer.add(titleRow, BorderLayout.NORTH)
 
-        // Model table in scroll
+        // Model table in scroll — sized dynamically to content
         val tableScroll = JBScrollPane(modelTable).apply {
             border = JBUI.Borders.empty()
-            preferredSize = java.awt.Dimension(0, 150)
+            horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
+            verticalScrollBarPolicy = ScrollPaneConstants.VERTICAL_SCROLLBAR_NEVER
         }
+        modelTableScroll = tableScroll
         outer.add(tableScroll, BorderLayout.CENTER)
 
         return outer
@@ -349,6 +353,7 @@ class ProviderSetupPanel(
         // Set checkbox renderer/editor for Enabled column
         providerTable.columnModel.getColumn(0).cellRenderer = CheckboxRenderer()
         providerTable.columnModel.getColumn(0).cellEditor = CheckboxEditor()
+        resizeTableScroll(providerTableScroll, providerTable)
         refreshDefaultCombos()
     }
 
@@ -370,6 +375,28 @@ class ProviderSetupPanel(
         modelTable.columnModel.getColumn(0).cellEditor = CheckboxEditor()
         modelTable.columnModel.getColumn(3).cellEditor = ComboBoxEditor(arrayOf("small", "medium", "large", "X-Large"))
         modelTable.columnModel.getColumn(4).cellEditor = ComboBoxEditor(arrayOf("free", "low-cost", "medium-cost", "high-cost"))
+        resizeTableScroll(modelTableScroll, modelTable)
+    }
+
+    /**
+     * Dynamically size a table's scroll pane to fit all rows without scroll bars.
+     * Falls back to a max height cap so very large tables still scroll.
+     */
+    private fun resizeTableScroll(scroll: JBScrollPane?, table: JTable) {
+        if (scroll == null) return
+        val rowCount = table.rowCount
+        if (rowCount == 0) {
+            scroll.preferredSize = java.awt.Dimension(0, 28) // header only
+        } else {
+            val headerHeight = table.tableHeader.preferredSize.height
+            val rowsHeight = rowCount * table.rowHeight
+            val totalHeight = headerHeight + rowsHeight + 4
+            // Cap at 300px so very large tables still scroll
+            val cappedHeight = totalHeight.coerceAtMost(300)
+            scroll.preferredSize = java.awt.Dimension(0, cappedHeight)
+        }
+        scroll.revalidate()
+        scroll.repaint()
     }
 
     private fun refreshDefaultCombos() {
