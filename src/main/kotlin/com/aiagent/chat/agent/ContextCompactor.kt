@@ -185,9 +185,9 @@ class ContextCompactor(
         recent: List<ChatMessage>? = null
     ): List<ChatMessage>? {
         val sys = systemMsg ?: messages.firstOrNull() ?: return null
-        val hasExplicitSystem = systemMsg != null
+        val shouldDropFirst = systemMsg != null || sys.role == MessageRole.SYSTEM
         val protectedRecent = recent ?: messages.takeLast(FALLBACK_PROTECTED_RECENT)
-        val toCompress = messages.drop(if (hasExplicitSystem) 1 else 0).dropLast(protectedRecent.size)
+        val toCompress = messages.drop(if (shouldDropFirst) 1 else 0).dropLast(protectedRecent.size)
 
         if (toCompress.isEmpty()) return null
 

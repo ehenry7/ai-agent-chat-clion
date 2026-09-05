@@ -1,7 +1,10 @@
 package com.aiagent.chat.agent
 
 import com.aiagent.chat.model.ChatMessage
+import com.aiagent.chat.model.FunctionCall
 import com.aiagent.chat.model.MessageRole
+import com.aiagent.chat.model.ToolCall
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -71,6 +74,26 @@ class ContextCompactorTest {
         assertTrue(compactor.needsCompaction(messages))
     }
 
+    @Test
+    fun `needsCompaction does not trigger when below both thresholds`() {
+        val compactor = ContextCompactor(createMockClient(), maxContextTokens = 32768)
+        // threshold = 16 messages, proactive token threshold = 26214 tokens
+        // 5 short messages = well below both
+        val messages = listOf(ChatMessage(MessageRole.SYSTEM, "system")) +
+            (1..4).map { ChatMessage(MessageRole.USER, "short msg $it") }
+        assertFalse(compactor.needsCompaction(messages))
+    }
+
+    @Test
+    fun `needsCompaction triggers on message count even with tiny token estimate`() {
+        val compactor = ContextCompactor(createMockClient(), maxContextTokens = 20000)
+        // threshold = 20000/2000 = 10
+        // 11 total messages (1 system + 10 conversation) with tiny content
+        val messages = listOf(ChatMessage(MessageRole.SYSTEM, "s")) +
+            (1..10).map { ChatMessage(MessageRole.USER, "x") }
+        assertTrue(compactor.needsCompaction(messages))
+    }
+
     // --- Token estimation ---
 
     @Test
@@ -92,6 +115,63 @@ class ContextCompactorTest {
         val short = listOf(ChatMessage(MessageRole.USER, "short"))
         val long = listOf(ChatMessage(MessageRole.USER, "x".repeat(4000)))
         assertTrue(compactor.estimateTokens(long) > compactor.estimateTokens(short))
+    }
+
+    @Test
+    fun `estimateTokens accounts for tool calls`() {
+        val compactor = ContextCompactor(createMockClient())
+        val noTools = listOf(ChatMessage(MessageRole.USER, "hello"))
+        val withTools = listOf(
+            ChatMessage(
+                role = MessageRole.ASSISTANT,
+                content = "hello",
+                toolCalls = listOf(
+                    ToolCall(id = "tc1", function = FunctionCall(name = "read_file", arguments = "{\"path\":\"/test/file.txt\"}"))
+                )
+            )
+        )
+        // Tool call adds: name.length(9) + arguments.length(24) + 20 = 53 extra chars
+        assertTrue(compactor.estimateTokens(withTools) > compactor.estimateTokens(noTools))
+    }
+
+    @Test
+    fun `estimateTokens accounts for multiple tool calls`() {
+        val compactor = ContextCompactor(createMockClient())
+        val oneTool = listOf(
+            ChatMessage(
+                role = MessageRole.ASSISTANT,
+                content = "x",
+                toolCalls = listOf(ToolCall(function = FunctionCall(name = "a", arguments = "{}")))
+            )
+        )
+        val twoTools = listOf(
+            ChatMessage(
+                role = MessageRole.ASSISTANT,
+                content = "x",
+                toolCalls = listOf(
+                    ToolCall(function = FunctionCall(name = "a", arguments = "{}")),
+                    ToolCall(function = FunctionCall(name = "b", arguments = "{}"))
+                )
+            )
+        )
+        assertTrue(compactor.estimateTokens(twoTools) > compactor.estimateTokens(oneTool))
+    }
+
+    @Test
+    fun `estimateTokens handles null content`() {
+        val compactor = ContextCompactor(createMockClient())
+        val messages = listOf(ChatMessage(MessageRole.ASSISTANT, content = null, toolCalls = listOf(ToolCall(function = FunctionCall(name = "test", arguments = "{}")))))
+        // Should still count the tool call overhead, not crash
+        assertTrue(compactor.estimateTokens(messages) > 0)
+    }
+
+    @Test
+    fun `estimateTokens includes per-message overhead`() {
+        val compactor = ContextCompactor(createMockClient())
+        val oneMsg = listOf(ChatMessage(MessageRole.USER, "x"))
+        val twoMsgs = listOf(ChatMessage(MessageRole.USER, "x"), ChatMessage(MessageRole.USER, "x"))
+        // Two messages should have more tokens due to per-message overhead (10 chars each)
+        assertTrue(compactor.estimateTokens(twoMsgs) > compactor.estimateTokens(oneMsg))
     }
 
     // --- Dynamic threshold ---
@@ -119,6 +199,13 @@ class ContextCompactorTest {
         assertEquals(100, compactor.compactionThreshold)
     }
 
+    @Test
+    fun `compactionThreshold uses default 32768 when not specified`() {
+        val compactor = ContextCompactor(createMockClient())
+        // default maxContextTokens = 32768, threshold = 16
+        assertEquals(16, compactor.compactionThreshold)
+    }
+
     // --- Constants ---
 
     @Test
@@ -134,6 +221,61 @@ class ContextCompactorTest {
     @Test
     fun `SUMMARIZE_CONTENT_LIMIT is 2000`() {
         assertEquals(2000, ContextCompactor.SUMMARIZE_CONTENT_LIMIT)
+    }
+
+    @Test
+    fun `CHARS_PER_TOKEN is 4`() {
+        assertEquals(4, ContextCompactor.CHARS_PER_TOKEN)
+    }
+
+    @Test
+    fun `PROACTIVE_THRESHOLD_RATIO is 0_80`() {
+        assertEquals(0.80, ContextCompactor.PROACTIVE_THRESHOLD_RATIO, 0.001)
+    }
+
+    @Test
+    fun `FALLBACK_PROTECTED_RECENT is 4`() {
+        assertEquals(4, ContextCompactor.FALLBACK_PROTECTED_RECENT)
+    }
+
+    @Test
+    fun `FALLBACK_TRUNCATE_CHARS is 200`() {
+        assertEquals(200, ContextCompactor.FALLBACK_TRUNCATE_CHARS)
+    }
+
+    // --- compact() boundary conditions ---
+
+    @Test
+    fun `compact returns original when too few messages`() {
+        val compactor = ContextCompactor(createMockClient())
+        // PROTECTED_RECENT + 1 = 9 messages, so 9 should be too few (needs > 9)
+        val messages = (1..9).map { ChatMessage(MessageRole.USER, "msg $it") }
+        val result = runBlocking { compactor.compact(messages) }
+        assertSame(messages, result)
+    }
+
+    @Test
+    fun `compact returns original for exactly PROTECTED_RECENT plus 1 messages`() {
+        val compactor = ContextCompactor(createMockClient())
+        // 9 messages = PROTECTED_RECENT(8) + 1, condition is <= so returns original
+        val messages = (1..9).map { ChatMessage(MessageRole.USER, "msg $it") }
+        val result = runBlocking { compactor.compact(messages) }
+        assertSame(messages, result)
+    }
+
+    @Test
+    fun `compact returns original for empty list`() {
+        val compactor = ContextCompactor(createMockClient())
+        val result = runBlocking { compactor.compact(emptyList()) }
+        assertTrue(result.isEmpty())
+    }
+
+    @Test
+    fun `compact returns original for single message`() {
+        val compactor = ContextCompactor(createMockClient())
+        val messages = listOf(ChatMessage(MessageRole.SYSTEM, "system"))
+        val result = runBlocking { compactor.compact(messages) }
+        assertSame(messages, result)
     }
 
     // --- Fallback compaction ---
@@ -170,6 +312,101 @@ class ContextCompactorTest {
         assertNull(compactor.fallbackCompact(messages))
     }
 
+    @Test
+    fun `fallbackCompact returns null for empty list`() {
+        val compactor = ContextCompactor(createMockClient())
+        assertNull(compactor.fallbackCompact(emptyList()))
+    }
+
+    @Test
+    fun `fallbackCompact preserves system message as first element`() {
+        val compactor = ContextCompactor(createMockClient())
+        val systemMsg = ChatMessage(MessageRole.SYSTEM, "important system prompt")
+        val messages = listOf(systemMsg) + (1..20).map { ChatMessage(MessageRole.USER, "x".repeat(1000)) }
+        val fallback = compactor.fallbackCompact(messages)
+        assertNotNull(fallback)
+        assertEquals(MessageRole.SYSTEM, fallback!![0].role)
+        assertEquals("important system prompt", fallback[0].content)
+    }
+
+    @Test
+    fun `fallbackCompact preserves recent messages at the end`() {
+        val compactor = ContextCompactor(createMockClient())
+        val recentContent = "RECENT_MARKER"
+        val messages = listOf(ChatMessage(MessageRole.SYSTEM, "system")) +
+            (1..20).map { ChatMessage(MessageRole.USER, "x".repeat(1000)) } +
+            (1..4).map { ChatMessage(MessageRole.USER, "$recentContent $it") }
+        val fallback = compactor.fallbackCompact(messages)
+        assertNotNull(fallback)
+        // Last 4 messages should be the recent ones, preserved unmodified
+        val lastFour = fallback!!.takeLast(4)
+        lastFour.forEach { msg ->
+            assertTrue(msg.content!!.contains(recentContent))
+            assertFalse(msg.content!!.contains("[truncated"))
+        }
+    }
+
+    @Test
+    fun `fallbackCompact drops oldest messages keeping at most 5`() {
+        val compactor = ContextCompactor(createMockClient())
+        val messages = listOf(ChatMessage(MessageRole.SYSTEM, "system")) +
+            (1..50).map { ChatMessage(MessageRole.USER, "msg $it") }
+        val fallback = compactor.fallbackCompact(messages)
+        assertNotNull(fallback)
+        // system(1) + max 5 old + 4 recent = 10
+        assertEquals(10, fallback!!.size)
+    }
+
+    @Test
+    fun `fallbackCompact keeps all old messages when fewer than 5`() {
+        val compactor = ContextCompactor(createMockClient())
+        val messages = listOf(ChatMessage(MessageRole.SYSTEM, "system")) +
+            (1..3).map { ChatMessage(MessageRole.USER, "x".repeat(1000)) } +
+            (1..4).map { ChatMessage(MessageRole.USER, "recent $it") }
+        val fallback = compactor.fallbackCompact(messages)
+        assertNotNull(fallback)
+        // system(1) + 3 old + 4 recent = 8
+        assertEquals(8, fallback!!.size)
+    }
+
+    @Test
+    fun `fallbackCompact does not truncate short messages`() {
+        val compactor = ContextCompactor(createMockClient())
+        val shortContent = "short"
+        val messages = listOf(ChatMessage(MessageRole.SYSTEM, "system")) +
+            (1..3).map { ChatMessage(MessageRole.USER, shortContent) } +
+            (1..4).map { ChatMessage(MessageRole.USER, "recent $it") }
+        val fallback = compactor.fallbackCompact(messages)
+        assertNotNull(fallback)
+        // Old messages that are short should not be truncated
+        val oldMsg = fallback!![1]
+        assertEquals(shortContent, oldMsg.content)
+    }
+
+    @Test
+    fun `fallbackCompact with explicit systemMsg and recent params`() {
+        val compactor = ContextCompactor(createMockClient())
+        val systemMsg = ChatMessage(MessageRole.SYSTEM, "sys")
+        val recent = (1..4).map { ChatMessage(MessageRole.USER, "recent $it") }
+        val oldMessages = (1..10).map { ChatMessage(MessageRole.USER, "x".repeat(1000)) }
+        val allMessages = listOf(systemMsg) + oldMessages + recent
+        val fallback = compactor.fallbackCompact(allMessages, systemMsg, recent)
+        assertNotNull(fallback)
+        assertTrue(fallback!!.size < allMessages.size)
+        assertEquals(MessageRole.SYSTEM, fallback[0].role)
+    }
+
+    @Test
+    fun `fallbackCompact returns null when only system and recent exist`() {
+        val compactor = ContextCompactor(createMockClient())
+        val systemMsg = ChatMessage(MessageRole.SYSTEM, "sys")
+        val recent = (1..4).map { ChatMessage(MessageRole.USER, "recent $it") }
+        val allMessages = listOf(systemMsg) + recent
+        // No old messages to compress
+        val fallback = compactor.fallbackCompact(allMessages, systemMsg, recent)
+        assertNull(fallback)
+    }
+
     // --- Diagnostics ---
 
     @Test
@@ -192,12 +429,79 @@ class ContextCompactorTest {
         assertTrue(diag.contains("Rolling summary:"))
     }
 
+    @Test
+    fun `getCompactionDiagnostics shows none for rolling summary initially`() {
+        val compactor = ContextCompactor(createMockClient(), maxContextTokens = 32768)
+        val messages = listOf(ChatMessage(MessageRole.SYSTEM, "system")) +
+            (1..5).map { ChatMessage(MessageRole.USER, "msg $it") }
+        val diag = compactor.getCompactionDiagnostics(messages)
+        assertTrue(diag.contains("Rolling summary: none"))
+    }
+
+    @Test
+    fun `getCompactionDiagnostics includes threshold value`() {
+        val compactor = ContextCompactor(createMockClient(), maxContextTokens = 32768)
+        val messages = listOf(ChatMessage(MessageRole.SYSTEM, "system"))
+        val diag = compactor.getCompactionDiagnostics(messages)
+        assertTrue(diag.contains("threshold: 16"))
+    }
+
+    @Test
+    fun `getCompactionDiagnostics includes percentage`() {
+        val compactor = ContextCompactor(createMockClient(), maxContextTokens = 32768)
+        val messages = listOf(ChatMessage(MessageRole.SYSTEM, "system")) +
+            (1..5).map { ChatMessage(MessageRole.USER, "x".repeat(1000)) }
+        val diag = compactor.getCompactionDiagnostics(messages)
+        assertTrue(diag.contains("%"))
+    }
+
+    @Test
+    fun `getCompactionDiagnostics includes proactive threshold`() {
+        val compactor = ContextCompactor(createMockClient(), maxContextTokens = 32768)
+        val messages = listOf(ChatMessage(MessageRole.SYSTEM, "system"))
+        val diag = compactor.getCompactionDiagnostics(messages)
+        assertTrue(diag.contains("Proactive threshold:"))
+        assertTrue(diag.contains("80%"))
+    }
+
+    @Test
+    fun `getCompactionDiagnostics for empty messages`() {
+        val compactor = ContextCompactor(createMockClient(), maxContextTokens = 32768)
+        val diag = compactor.getCompactionDiagnostics(emptyList())
+        assertTrue(diag.contains("Message count: -1"))
+        assertTrue(diag.contains("Estimated tokens: 0"))
+    }
+
     // --- Rolling summary reset ---
 
     @Test
     fun `resetRollingSummary does not throw`() {
         val compactor = ContextCompactor(createMockClient())
         compactor.resetRollingSummary()
+    }
+
+    @Test
+    fun `resetRollingSummary clears rolling summary status in diagnostics`() {
+        val compactor = ContextCompactor(createMockClient(), maxContextTokens = 32768)
+        val messages = listOf(ChatMessage(MessageRole.SYSTEM, "system"))
+        // Reset and verify diagnostics shows "none"
+        compactor.resetRollingSummary()
+        val diag = compactor.getCompactionDiagnostics(messages)
+        assertTrue(diag.contains("Rolling summary: none"))
+    }
+
+    // --- maxContextTokens property ---
+
+    @Test
+    fun `maxContextTokens is accessible and matches constructor value`() {
+        val compactor = ContextCompactor(createMockClient(), maxContextTokens = 65536)
+        assertEquals(65536, compactor.maxContextTokens)
+    }
+
+    @Test
+    fun `maxContextTokens defaults to 32768`() {
+        val compactor = ContextCompactor(createMockClient())
+        assertEquals(32768, compactor.maxContextTokens)
     }
 
     /**
