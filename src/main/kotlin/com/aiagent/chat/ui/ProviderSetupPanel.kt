@@ -103,12 +103,38 @@ class ProviderSetupPanel(
         font = font.deriveFont(java.awt.Font.BOLD, 13f)
     }
 
+    // --- General params table ---
+    private val generalParamsTableModel = DefaultTableModel(0, 2).apply {
+        setColumnIdentifiers(arrayOf("Parameter", "Value"))
+        addRow(arrayOf("Default Provider", ""))
+        addRow(arrayOf("Default Model", ""))
+        addRow(arrayOf("Max Steps", "25"))
+    }
+    private val generalParamsTable = object : JTable(generalParamsTableModel) {
+        override fun getCellEditor(row: Int, column: Int): TableCellEditor {
+            if (column == 1) {
+                return when (row) {
+                    0 -> DefaultCellEditor(defaultProviderCombo)
+                    1 -> DefaultCellEditor(defaultModelCombo)
+                    else -> DefaultCellEditor(maxStepsField)
+                }
+            }
+            return super.getCellEditor(row, column)
+        }
+        override fun isCellEditable(row: Int, column: Int): Boolean = column == 1
+    }.apply {
+        columnModel.getColumn(0).preferredWidth = 120
+        columnModel.getColumn(1).preferredWidth = 200
+        rowHeight = 24
+    }
+
     // --- Currently selected provider for model table display ---
     private var selectedProviderId: String? = null
 
     // --- Scroll pane references for dynamic sizing ---
     private var providerTableScroll: JBScrollPane? = null
     private var modelTableScroll: JBScrollPane? = null
+    private var generalParamsTableScroll: JBScrollPane? = null
 
     // --- Provider edit popup fields ---
     private val popupNameField = JBTextField()
@@ -179,28 +205,31 @@ class ProviderSetupPanel(
 
     /**
      * General Parameters section — placed on TOP of all other sections.
-     * Contains: Default Provider, Default Model, Max Steps.
-     * Sized to content, not stretched.
+     * Contains: Default Provider, Default Model, Max Steps — displayed as a table
+     * with the same look as the provider and model tables.
      */
     private fun buildGeneralParamsSection(): JComponent {
-        val outer = JPanel(GridLayout(0, 1, 2, 2)).apply {
-            isOpaque = false
-            border = JBUI.Borders.compound(
-                JBUI.Borders.customLine(JBColor.border(), 1),
-                JBUI.Borders.empty(6)
-            )
-            // Size to content, do not stretch
-            maximumSize = java.awt.Dimension(Int.MAX_VALUE, getPreferredSize().height)
-        }
+        val outer = JPanel(BorderLayout(0, 4)).apply { isOpaque = false }
+        outer.border = JBUI.Borders.compound(
+            JBUI.Borders.customLine(JBColor.border(), 1),
+            JBUI.Borders.empty(6)
+        )
 
+        // Title
         outer.add(JBLabel("AI Agent General Parameters").apply {
             font = font.deriveFont(java.awt.Font.BOLD, 13f)
-        })
+        }, BorderLayout.NORTH)
 
-        // Default Provider row
-        val providerRow = JPanel(FlowLayout(FlowLayout.LEFT, 4, 2)).apply { isOpaque = false }
-        providerRow.add(JBLabel("Default Provider:").apply { font = font.deriveFont(java.awt.Font.PLAIN, 11f) })
-        defaultProviderCombo.preferredSize = java.awt.Dimension(150, 24)
+        // Table in scroll — sized dynamically to content
+        val tableScroll = JBScrollPane(generalParamsTable).apply {
+            border = JBUI.Borders.empty()
+            horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
+            verticalScrollBarPolicy = ScrollPaneConstants.VERTICAL_SCROLLBAR_NEVER
+        }
+        generalParamsTableScroll = tableScroll
+        outer.add(tableScroll, BorderLayout.CENTER)
+
+        // Wire default provider combo action
         defaultProviderCombo.addActionListener {
             val selectedName = defaultProviderCombo.selectedItem as? String ?: return@addActionListener
             val providers = settings.getProviders()
@@ -209,26 +238,6 @@ class ProviderSetupPanel(
                 settings.addProvider(updated)
             }
         }
-        providerRow.add(defaultProviderCombo)
-        outer.add(providerRow)
-
-        // Default Model row
-        val modelRow = JPanel(FlowLayout(FlowLayout.LEFT, 4, 2)).apply { isOpaque = false }
-        modelRow.add(JBLabel("Default Model:").apply { font = font.deriveFont(java.awt.Font.PLAIN, 11f) })
-        defaultModelCombo.preferredSize = java.awt.Dimension(200, 24)
-        modelRow.add(defaultModelCombo)
-        outer.add(modelRow)
-
-        // Max Steps row
-        val stepsRow = JPanel(FlowLayout(FlowLayout.LEFT, 4, 2)).apply { isOpaque = false }
-        stepsRow.add(JBLabel("Max Steps:").apply { font = font.deriveFont(java.awt.Font.PLAIN, 11f) })
-        maxStepsField.preferredSize = java.awt.Dimension(60, 24)
-        stepsRow.add(maxStepsField)
-        stepsRow.add(JBLabel("(default: 25)").apply {
-            font = font.deriveFont(java.awt.Font.ITALIC, 10f)
-            foreground = JBColor(0x999999, 0x666666)
-        })
-        outer.add(stepsRow)
 
         return outer
     }
@@ -436,6 +445,24 @@ class ProviderSetupPanel(
                 defaultModelCombo.selectedItem = "${p.name}/${m.name}"
             }
         }
+
+        // Sync general params table value cells from the combos
+        syncGeneralParamsTable()
+    }
+
+    /**
+     * Sync the Value column of the general params table from the combo boxes and max steps field.
+     */
+    private fun syncGeneralParamsTable() {
+        val providerVal = defaultProviderCombo.selectedItem as? String ?: ""
+        val modelVal = defaultModelCombo.selectedItem as? String ?: ""
+        val stepsVal = maxStepsField.text
+        if (generalParamsTableModel.rowCount >= 3) {
+            generalParamsTableModel.setValueAt(providerVal, 0, 1)
+            generalParamsTableModel.setValueAt(modelVal, 1, 1)
+            generalParamsTableModel.setValueAt(stepsVal, 2, 1)
+        }
+        resizeTableScroll(generalParamsTableScroll, generalParamsTable)
     }
 
     // ----------------------------------------------------------------
@@ -762,6 +789,7 @@ class ProviderSetupPanel(
 
     private fun syncFieldsFromSettings() {
         maxStepsField.text = settings.state.maxSteps.toString()
+        syncGeneralParamsTable()
     }
 
     private fun setStatus(msg: String) {
