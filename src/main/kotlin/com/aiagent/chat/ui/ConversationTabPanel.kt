@@ -55,7 +55,7 @@ class ConversationTabPanel : JBPanel<ConversationTabPanel>(BorderLayout()) {
         border = JBUI.Borders.empty()
         background = JBColor.PanelBackground
 
-        // Tab bar with scroll
+        // Row 1: Tab bar (conversation tabs only, scrollable)
         val tabScroll = JScrollPane(tabBar).apply {
             border = JBUI.Borders.empty()
             horizontalScrollBarPolicy = JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED
@@ -63,29 +63,36 @@ class ConversationTabPanel : JBPanel<ConversationTabPanel>(BorderLayout()) {
             preferredSize = Dimension(0, 32)
         }
 
-        val tabBarWrapper = JPanel(BorderLayout()).apply {
+        // Row 2: Button bar — separated from tabs, bigger buttons with text
+        val buttonBar = JPanel(FlowLayout(FlowLayout.RIGHT, 6, 4)).apply {
+            isOpaque = false
+            border = JBUI.Borders.compound(
+                JBUI.Borders.customLine(JBColor.border(), 0, 0, 1, 0),
+                JBUI.Borders.empty(2, 6)
+            )
+        }
+        // Model status button (shows current model + phase)
+        buttonBar.add(createModelStatusButton())
+        // New Session button with text
+        buttonBar.add(createTextIconButton(AllIcons.General.Add, "New Session", "New Session") {
+            onNewTab?.invoke()
+        })
+        // More Actions button with text
+        buttonBar.add(createTextIconButton(createDropdownArrowIcon(), "More", "Session Actions") { source ->
+            showMoreActionsPopup(source)
+        })
+        // Settings/Menu button with text
+        buttonBar.add(createTextIconButton(createHamburgerIcon(), "Menu", "Settings & Menu") { source ->
+            onMenuClick?.invoke(source)
+        })
+
+        // Stack tab row and button row vertically
+        val topPanel = JPanel(BorderLayout()).apply {
             isOpaque = false
             add(tabScroll, BorderLayout.CENTER)
-            val rightButtonsPanel = JPanel(FlowLayout(FlowLayout.RIGHT, 2, 0)).apply {
-                isOpaque = false
-                // Model status button (shows current model + phase)
-                add(createModelStatusButton())
-                // + button for new session
-                add(createIconButton(AllIcons.General.Add, "New Session") {
-                    onNewTab?.invoke()
-                })
-                // Dropdown arrow for session-specific actions (info, rename)
-                add(createIconButton(createDropdownArrowIcon(), "More Actions") { source ->
-                    showMoreActionsPopup(source)
-                })
-                // Hamburger menu icon for settings/menu (separate from session dropdown)
-                add(createIconButton(createHamburgerIcon(), "Settings & Menu") { source ->
-                    onMenuClick?.invoke(source)
-                })
-            }
-            add(rightButtonsPanel, BorderLayout.EAST)
+            add(buttonBar, BorderLayout.SOUTH)
         }
-        add(tabBarWrapper, BorderLayout.NORTH)
+        add(topPanel, BorderLayout.NORTH)
         add(contentPanel, BorderLayout.CENTER)
     }
 
@@ -220,18 +227,34 @@ class ConversationTabPanel : JBPanel<ConversationTabPanel>(BorderLayout()) {
     }
 
     /**
+     * Creates a prominent button with both icon and text label.
+     * Larger and more visible than the icon-only buttons.
+     */
+    private fun createTextIconButton(icon: Icon, text: String, tooltip: String, onClick: (java.awt.Component) -> Unit): JButton {
+        return JButton(text, icon).apply {
+            toolTipText = tooltip
+            isContentAreaFilled = true
+            isBorderPainted = true
+            isFocusPainted = false
+            margin = JBUI.insets(4, 8)
+            font = font.deriveFont(java.awt.Font.PLAIN, 12f)
+            cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
+            addActionListener { e -> onClick(e.source as java.awt.Component) }
+        }
+    }
+
+    /**
      * Creates a model status button that shows the current model name.
      */
     private fun createModelStatusButton(): JButton {
         return JButton("Model").apply {
             toolTipText = "Model status — click for details"
-            isContentAreaFilled = false
+            isContentAreaFilled = true
             isBorderPainted = true
             isFocusPainted = false
-            margin = JBUI.insets(2, 6)
-            preferredSize = Dimension(80, 24)
-            font = font.deriveFont(java.awt.Font.PLAIN, 10f)
-            foreground = JBColor(0x666666, 0xBBBBBB)
+            margin = JBUI.insets(4, 8)
+            font = font.deriveFont(java.awt.Font.PLAIN, 12f)
+            foreground = JBColor(0x333333, 0xCCCCCC)
             cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
             addActionListener { e -> onModelStatusClick?.invoke(e.source as java.awt.Component) }
             modelStatusButton = this
@@ -243,7 +266,7 @@ class ConversationTabPanel : JBPanel<ConversationTabPanel>(BorderLayout()) {
      */
     fun updateModelStatus(modelName: String) {
         SwingUtilities.invokeLater {
-            modelStatusButton?.text = modelName.take(12)
+            modelStatusButton?.text = modelName.take(20)
             modelStatusButton?.toolTipText = "Model: $modelName — click for details"
         }
     }
