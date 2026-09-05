@@ -14,8 +14,12 @@ import com.aiagent.chat.model.*
  * - Compaction event tracking (tokens saved)
  */
 class UsageTracker(
-    private val maxContextTokens: Int = 32768
+    private var maxContextTokens: Int = 32768
 ) {
+
+    fun updateMaxContextTokens(newMax: Int) {
+        maxContextTokens = newMax
+    }
     // --- Per-message usage records ---
     private val messageUsages = mutableListOf<Usage>()
 

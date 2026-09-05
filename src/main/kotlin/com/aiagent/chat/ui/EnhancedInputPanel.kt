@@ -1,6 +1,7 @@
 package com.aiagent.chat.ui
 
 import com.aiagent.chat.debug.DebugLog
+import com.aiagent.chat.tools.SlashCommands
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.Project
@@ -73,6 +74,8 @@ class EnhancedInputPanel(
 
     private var promptHistory = mutableListOf<String>()
     private var historyIndex = -1
+
+    private var slashPopup: com.intellij.openapi.ui.popup.JBPopup? = null
 
     init {
         isOpaque = false
@@ -165,6 +168,27 @@ class EnhancedInputPanel(
     private fun setupListeners() {
         inputArea.addKeyListener(object : KeyAdapter() {
             override fun keyPressed(e: KeyEvent) {
+                // --- Slash command popup navigation ---
+                if (slashPopup?.isDisposed == false) {
+                    when (e.keyCode) {
+                        KeyEvent.VK_ESCAPE -> {
+                            e.consume()
+                            slashPopup?.cancel()
+                            slashPopup = null
+                            return
+                        }
+                        KeyEvent.VK_ENTER -> {
+                            e.consume()
+                            // Let the popup handle the selection
+                            return
+                        }
+                        KeyEvent.VK_UP, KeyEvent.VK_DOWN -> {
+                            // Let the popup handle arrow navigation
+                            return
+                        }
+                    }
+                }
+
                 when {
                     e.keyCode == KeyEvent.VK_ENTER && !e.isShiftDown -> {
                         e.consume()
@@ -191,6 +215,17 @@ class EnhancedInputPanel(
             override fun keyTyped(e: KeyEvent) {
                 if (e.keyChar == '@') {
                     SwingUtilities.invokeLater { showFileMentionPopup() }
+                }
+            }
+
+            override fun keyReleased(e: KeyEvent) {
+                // Show or update slash popup based on current text
+                val text = inputArea.text
+                if (text.startsWith("/") && !text.contains(" ") && !text.contains("\n")) {
+                    SwingUtilities.invokeLater { showOrUpdateSlashPopup(text) }
+                } else if (slashPopup?.isDisposed == false) {
+                    slashPopup?.cancel()
+                    slashPopup = null
                 }
             }
         })
@@ -249,6 +284,53 @@ class EnhancedInputPanel(
             }
             .createPopup()
             .showUnderneathOf(inputArea)
+    }
+
+    private fun showOrUpdateSlashPopup(typedText: String) {
+        // Build list of matching commands from SlashCommands.BUILT_IN
+        val query = typedText.removePrefix("/").lowercase()
+        val allCommands = SlashCommands.BUILT_IN.values.map { cmd ->
+            "/${cmd.name} - ${cmd.description}"
+        }
+        val filtered = if (query.isEmpty()) {
+            allCommands
+        } else {
+            allCommands.filter { it.substringAfter("/").startsWith(query) }
+        }
+
+        // If no matches, close any existing popup
+        if (filtered.isEmpty()) {
+            if (slashPopup?.isDisposed == false) {
+                slashPopup?.cancel()
+                slashPopup = null
+            }
+            return
+        }
+
+        // If popup is already showing, just update the list
+        if (slashPopup?.isDisposed == false) {
+            // Close and recreate to update the filtered list
+            slashPopup?.cancel()
+            slashPopup = null
+        }
+
+        // Create new popup with filtered commands
+        val popup = JBPopupFactory.getInstance()
+            .createPopupChooserBuilder(filtered)
+            .setTitle("Slash Commands")
+            .setItemChosenCallback { selectedItem ->
+                // Extract the command name (e.g. "/help - Show..." -> "/help")
+                val cmdName = selectedItem.substringBefore(" -")
+                inputArea.text = cmdName
+                inputArea.caretPosition = cmdName.length
+                inputArea.requestFocusInWindow()
+            }
+            .setResizable(false)
+            .setMovable(false)
+            .createPopup()
+
+        popup.showUnderneathOf(inputArea)
+        slashPopup = popup
     }
 
     private fun addFileTag(file: VirtualFile) {

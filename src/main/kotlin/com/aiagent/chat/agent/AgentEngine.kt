@@ -45,7 +45,11 @@ class AgentEngine(
         const val RECENT_WINDOW_MESSAGES = 8
         const val TOOL_COMPRESS_THRESHOLD = 2000
         const val COMPRESSED_TOOL_NOTICE = "[Tool executed successfully. Output compressed for memory preservation.]"
+        const val ASSISTANT_COMPRESS_THRESHOLD = 3000
+        const val COMPRESSED_ASSISTANT_NOTICE = "[Assistant response with code/explanation, compressed for memory preservation.]"
         const val MAX_COMPACTION_RETRIES = 2
+        /** Proactive compaction: trigger when estimated tokens exceed this fraction of max. */
+        const val PROACTIVE_COMPACTION_RATIO = 0.80
     }
 
     private val mutatingTools: Set<String> get() = ToolRegistry.mutatingToolNames()
@@ -74,6 +78,10 @@ class AgentEngine(
                 m
             } else if (m.role == MessageRole.TOOL && (m.content?.length ?: 0) > TOOL_COMPRESS_THRESHOLD) {
                 m.copy(content = COMPRESSED_TOOL_NOTICE)
+            } else if (m.role == MessageRole.ASSISTANT && (m.content?.length ?: 0) > ASSISTANT_COMPRESS_THRESHOLD) {
+                // Compress long assistant messages (code blocks, explanations) in the old window
+                val preview = m.content?.take(200) ?: ""
+                m.copy(content = "$preview\n\n$COMPRESSED_ASSISTANT_NOTICE")
             } else {
                 m
             }
@@ -389,9 +397,6 @@ class AgentEngine(
                 ephemeral.add(ChatMessage(MessageRole.SYSTEM, "Current Plan State:\n$it"))
             }
 
-            val compressed = applySemanticSlidingWindow(messages)
-            val messagesForApi = compressed + ephemeral
-
             // --- State: GENERATING ---
             stateMachine.transitionTo(AgentSessionState.GENERATING, "Step ${step + 1}: requesting LLM response")
 
@@ -513,8 +518,16 @@ class AgentEngine(
     }
 
     /**
-     * Call the LLM API with automatic context compaction on context-limit errors.
-     * If a ContextLimitException is thrown, compacts the message history and retries.
+     * Call the LLM API with automatic context compaction.
+     *
+     * Two compaction modes:
+     * 1. Proactive: before each API call, estimate token count. If estimated tokens
+     *    exceed 80% of maxContextTokens, compact before sending (avoids wasted round-trips).
+     * 2. Reactive: if the API returns ContextLimitException, compact and retry.
+     *
+     * Fallback strategy: if LLM summarization doesn't reduce enough, use fallbackCompact
+     * (truncate old messages to 200 chars, reduce protected window to 4).
+     *
      * Retries up to MAX_COMPACTION_RETRIES times.
      */
     private suspend fun callWithCompaction(
@@ -524,6 +537,24 @@ class AgentEngine(
     ): ChatMessage {
         var compactionAttempts = 0
         while (true) {
+            // --- Proactive compaction: check token estimate before API call ---
+            if (contextCompactor != null) {
+                val estimatedTokens = contextCompactor.estimateTokens(messages)
+                val proactiveThreshold = (contextCompactor.maxContextTokens * PROACTIVE_COMPACTION_RATIO).toInt()
+                if (estimatedTokens >= proactiveThreshold && contextCompactor.needsCompaction(messages)) {
+                    DebugLog.info("AgentEngine", "Proactive compaction: estimated $estimatedTokens tokens >= $proactiveThreshold threshold, compacting before API call")
+                    onDelta(AgentDelta.Status("[proactive context compaction: ~${estimatedTokens} tokens estimated]"))
+                    val sizeBefore = messages.size
+                    val compacted = contextCompactor.compact(messages)
+                    if (compacted.size < sizeBefore) {
+                        messages.clear()
+                        messages.addAll(compacted)
+                        onDelta(AgentDelta.CompactionNotice("Proactive compaction", sizeBefore, compacted.size))
+                        DebugLog.info("AgentEngine", "Proactive compaction successful: $sizeBefore -> ${compacted.size} messages")
+                    }
+                }
+            }
+
             val compressed = applySemanticSlidingWindow(messages)
             val messagesForApi = compressed + ephemeral
             DebugLog.info("AgentEngine", "Sending ${messagesForApi.size} messages to API, ${tools.size} tools (compaction attempts: $compactionAttempts)")
@@ -549,14 +580,24 @@ class AgentEngine(
                     onDelta(AgentDelta.CompactionNotice("Context compacted to fit within limits", sizeBefore, sizeAfter))
                     DebugLog.info("AgentEngine", "Compaction successful: $sizeBefore -> $sizeAfter messages")
                 } else {
-                    DebugLog.warn("AgentEngine", "Compaction did not reduce message count, giving up")
-                    throw e
+                    // LLM compaction didn't help — try fallback strategy
+                    DebugLog.warn("AgentEngine", "LLM compaction did not reduce message count, trying fallback strategy")
+                    val fallback = contextCompactor.fallbackCompact(messages)
+                    if (fallback != null && fallback.size < sizeBefore) {
+                        messages.clear()
+                        messages.addAll(fallback)
+                        onDelta(AgentDelta.CompactionNotice("Fallback compaction (truncate old messages)", sizeBefore, fallback.size))
+                        DebugLog.info("AgentEngine", "Fallback compaction: $sizeBefore -> ${fallback.size} messages")
+                    } else {
+                        DebugLog.warn("AgentEngine", "Fallback compaction also failed, giving up")
+                        throw e
+                    }
                 }
             }
         }
     }
 
-    private fun buildSystemPrompt(toolNames: List<String>, memory: String, globalMem: String, phase: String): String {
+    internal fun buildSystemPrompt(toolNames: List<String>, memory: String, globalMem: String, phase: String): String {
         return "You are an autonomous coding agent working inside a CLion project.\n" +
                 "Available tools: ${toolNames.joinToString(", ")}.\n" +
                 "Current phase: '$phase'. In 'discovery', you only have read-only tools to explore the codebase. " +
@@ -566,6 +607,10 @@ class AgentEngine(
                 "Use compress_chat_probe to check if context is getting long, and compress_chat_apply to compact it.\n" +
                 "Use ask_questions to ask the user structured questions when you need clarification.\n" +
                 "Use undo_textdoc to revert the last file edit if you made a mistake.\n" +
+                "IMPORTANT: Prefer run_python over run_command for any computation, data processing, file parsing, or scripting tasks. " +
+                "Use run_python for calculations, string manipulation, JSON/XML processing, regex operations, and any logic that can be expressed in Python. " +
+                "Only use run_command for tasks that genuinely require shell features (e.g. git, build tools, process management) " +
+                "or when Python is not suitable for the task.\n" +
                 (if (globalMem.isNotBlank()) "\n<agent_global_memory>\n$globalMem\n</agent_global_memory>" else "") +
                 (if (memory.isNotBlank()) "\n<agent_memory>\n$memory\n</agent_memory>" else "") +
                 planManager.toSystemPromptSection() +

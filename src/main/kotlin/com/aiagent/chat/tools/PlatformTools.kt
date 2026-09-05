@@ -1,5 +1,6 @@
 package com.aiagent.chat.tools
 
+import com.aiagent.chat.debug.DebugLog
 import com.aiagent.chat.model.ToolCategory
 import com.aiagent.chat.model.ToolDefinition
 import com.aiagent.chat.model.ToolFunctionDef
@@ -417,19 +418,28 @@ class PlatformToolHandler(
     fun compressChatProbe(): String {
         val compactor = contextCompactor ?: return "Error: Context compactor not available"
         val messages = getMessages?.invoke() ?: return "Error: Cannot access message history"
-        val needsCompaction = compactor.needsCompaction(messages)
-        val conversationMessages = messages.size - 1
-        return "Message count: $conversationMessages\nCompaction needed: $needsCompaction\nThreshold: ${com.aiagent.chat.agent.ContextCompactor.COMPACTION_THRESHOLD} messages"
+        return compactor.getCompactionDiagnostics(messages)
     }
 
     fun compressChatApply(): String {
         val compactor = contextCompactor ?: return "Error: Context compactor not available"
         val messages = getMessages?.invoke() ?: return "Error: Cannot access message history"
         if (!compactor.needsCompaction(messages)) {
-            return "Compaction not needed yet (message count below threshold)."
+            return "Compaction not needed yet (message count and token estimate below thresholds)."
         }
         val sizeBefore = messages.size
-        val compacted = kotlinx.coroutines.runBlocking { compactor.compact(messages) }
+        // Use runBlocking with timeout to avoid potential deadlock
+        val compacted = try {
+            kotlinx.coroutines.runBlocking {
+                kotlinx.coroutines.withTimeout(30_000) {
+                    compactor.compact(messages)
+                }
+            }
+        } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+            // Fallback: use non-LLM compaction if LLM summarization times out
+            DebugLog.warn("PlatformTools", "compressChatApply timed out, using fallback compaction")
+            compactor.fallbackCompact(messages) ?: return "Error: Compaction timed out and fallback failed."
+        }
         val sizeAfter = compacted.size
         setMessages?.invoke(compacted)
         return "Context compacted: $sizeBefore -> $sizeAfter messages."

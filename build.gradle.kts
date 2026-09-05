@@ -20,6 +20,12 @@ tasks.withType<JavaCompile>().configureEach {
 }
 tasks.test {
     useJUnitPlatform()
+    testLogging {
+        events("passed", "skipped", "failed", "standardOut", "standardError")
+        showStandardStreams = true
+        showExceptions = true
+        showStackTraces = true
+    }
 }
 group = "com.aiagent.chat"
 version = "0.46.5"
@@ -41,6 +47,8 @@ dependencies {
     }
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.1")
     testImplementation("junit:junit:4.13.2")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher:1.11.0")
+    testRuntimeOnly("org.junit.vintage:junit-vintage-engine:5.11.0")
 }
 
 kotlin {
