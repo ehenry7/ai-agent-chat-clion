@@ -96,6 +96,11 @@ class ProviderSetupPanel(
         foreground = JBColor(0x666666, 0x999999)
     }
 
+    // --- Model section title (updates with selected provider) ---
+    private val modelSectionLabel = JBLabel("Models").apply {
+        font = font.deriveFont(java.awt.Font.BOLD, 13f)
+    }
+
     // --- Currently selected provider for model table display ---
     private var selectedProviderId: String? = null
 
@@ -146,6 +151,7 @@ class ProviderSetupPanel(
                 val provider = settings.getProviders().find { it.name == selectedProviderId }
                 if (provider != null) {
                     selectedProviderId = provider.id
+                    modelSectionLabel.text = "Models of: ${provider.name}"
                     refreshModelTable(provider)
                 }
             }
@@ -272,9 +278,7 @@ class ProviderSetupPanel(
 
         // Title row with buttons
         val titleRow = JPanel(BorderLayout()).apply { isOpaque = false }
-        titleRow.add(JBLabel("Models").apply {
-            font = font.deriveFont(java.awt.Font.BOLD, 13f)
-        }, BorderLayout.WEST)
+        titleRow.add(modelSectionLabel, BorderLayout.WEST)
 
         val btnPanel = JPanel(FlowLayout(FlowLayout.RIGHT, 2, 0)).apply { isOpaque = false }
         val syncBtn = JButton("Sync Models", AllIcons.Actions.Refresh).apply {
@@ -778,6 +782,7 @@ class ProviderSetupPanel(
                 break
             }
         }
+        modelSectionLabel.text = "Models of: ${provider.name}"
         refreshModelTable(provider)
         refreshDefaultCombos()
     }
