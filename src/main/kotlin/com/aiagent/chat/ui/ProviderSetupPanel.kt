@@ -49,8 +49,9 @@ class ProviderSetupPanel(
     // --- Provider table ---
     private val providerTableModel = DefaultTableModel(0, 4)
     private val providerTable = JTable(providerTableModel).apply {
-        columnModel.getColumn(0).headerValue = "Enabled"
-        columnModel.getColumn(0).preferredWidth = 50
+        columnModel.getColumn(0).headerValue = ""
+        columnModel.getColumn(0).preferredWidth = 30
+        columnModel.getColumn(0).maxWidth = 30
         columnModel.getColumn(1).headerValue = "Name"
         columnModel.getColumn(1).preferredWidth = 120
         columnModel.getColumn(2).headerValue = "URL"
@@ -64,8 +65,9 @@ class ProviderSetupPanel(
     // --- Model table ---
     private val modelTableModel = DefaultTableModel(0, 7)
     private val modelTable = JTable(modelTableModel).apply {
-        columnModel.getColumn(0).headerValue = "Enabled"
-        columnModel.getColumn(0).preferredWidth = 50
+        columnModel.getColumn(0).headerValue = ""
+        columnModel.getColumn(0).preferredWidth = 30
+        columnModel.getColumn(0).maxWidth = 30
         columnModel.getColumn(1).headerValue = "Name"
         columnModel.getColumn(1).preferredWidth = 120
         columnModel.getColumn(2).headerValue = "Id"
