@@ -276,11 +276,12 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
             }
         }
 
-        providerSetupPanel.onMeasureModels = { provider, onProgress, isCancelled ->
+        providerSetupPanel.onMeasureModels = { provider, onMeasuring, onProgress, isCancelled ->
             try {
                 val results = mutableMapOf<String, Long>()
                 for (model in provider.models) {
                     if (isCancelled()) break
+                    onMeasuring(model.id)
                     val latency = providerManager.measureModel(provider, model.id)
                     results[model.id] = latency
                     onProgress(model.id, latency)

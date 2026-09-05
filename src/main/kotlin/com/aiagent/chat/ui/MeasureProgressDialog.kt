@@ -105,6 +105,15 @@ class MeasureProgressDialog(
     }
 
     /**
+     * Indicate which model is currently being measured.
+     */
+    fun setCurrentModel(modelName: String) {
+        SwingUtilities.invokeLater {
+            statusLabel.text = "Measuring: $modelName"
+        }
+    }
+
+    /**
      * Add or update a row for a measured model.
      * Must be called on the EDT.
      */

@@ -583,6 +583,7 @@ class ProviderSetupPanel(
             try {
                 val results = onMeasureModels?.invoke(
                     provider,
+                    { modelId -> dialog.setCurrentModel(modelId) },
                     { modelId, latency -> dialog.updateModelResult(modelId, latency) },
                     { dialog.isCancelled }
                 )
@@ -766,11 +767,12 @@ class ProviderSetupPanel(
     /**
      * Measure all models for a provider.
      * @param provider the provider whose models to measure
+     * @param onMeasuring callback invoked before each model measurement (modelId)
      * @param onProgress callback invoked after each model measurement (modelId, latencyMs)
      * @param isCancelled returns true if the user cancelled the operation
      * @return map of modelId -> latencyMs (only for measured models)
      */
-    var onMeasureModels: (suspend (ProviderConfig, (String, Long) -> Unit, () -> Boolean) -> Map<String, Long>?)? = null
+    var onMeasureModels: (suspend (ProviderConfig, (String) -> Unit, (String, Long) -> Unit, () -> Boolean) -> Map<String, Long>?)? = null
 
     /**
      * Called by parent after model sync completes — refreshes the UI.
