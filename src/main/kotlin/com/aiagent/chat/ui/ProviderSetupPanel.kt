@@ -561,10 +561,25 @@ class ProviderSetupPanel(
             setStatus("No models to measure. Sync first.")
             return
         }
+
+        // Find parent frame for dialog
+        val parentFrame = SwingUtilities.getWindowAncestor(this) as? JFrame
+        val dialog = MeasureProgressDialog(
+            owner = parentFrame,
+            providerName = provider.name,
+            providerUrl = provider.baseUrl,
+            totalModels = provider.models.size
+        )
+        dialog.isVisible = true
+
         setStatus("Measuring ${provider.models.size} models...")
         scope.launch {
             try {
-                val results = onMeasureModels?.invoke(provider)
+                val results = onMeasureModels?.invoke(
+                    provider,
+                    { modelId, latency -> dialog.updateModelResult(modelId, latency) },
+                    { dialog.isCancelled }
+                )
                 SwingUtilities.invokeLater {
                     if (results != null) {
                         // Update models with measurement results
@@ -591,10 +606,21 @@ class ProviderSetupPanel(
                         val okCount = results.count { it.value > 0 }
                         val failCount = results.count { it.value == 0L }
                         setStatus("Measured: $okCount OK, $failCount failed/disabled")
+
+                        if (dialog.isCancelled) {
+                            dialog.finishCancelled(results.size)
+                        } else {
+                            dialog.finish(okCount, failCount)
+                        }
+                    } else {
+                        dialog.finishCancelled(0)
                     }
                 }
             } catch (e: Exception) {
-                SwingUtilities.invokeLater { setStatus("Measure error: ${e.message}") }
+                SwingUtilities.invokeLater {
+                    setStatus("Measure error: ${e.message}")
+                    dialog.finishCancelled(0)
+                }
             }
         }
     }
@@ -730,7 +756,15 @@ class ProviderSetupPanel(
 
     var onSyncModels: (suspend (ProviderConfig) -> ProviderConfig?)? = null
     var onTestConnection: (suspend (ProviderConfig) -> ProviderManager.ConnectionTestResult?)? = null
-    var onMeasureModels: (suspend (ProviderConfig) -> Map<String, Long>?)? = null
+
+    /**
+     * Measure all models for a provider.
+     * @param provider the provider whose models to measure
+     * @param onProgress callback invoked after each model measurement (modelId, latencyMs)
+     * @param isCancelled returns true if the user cancelled the operation
+     * @return map of modelId -> latencyMs (only for measured models)
+     */
+    var onMeasureModels: (suspend (ProviderConfig, (String, Long) -> Unit, () -> Boolean) -> Map<String, Long>?)? = null
 
     /**
      * Called by parent after model sync completes — refreshes the UI.
