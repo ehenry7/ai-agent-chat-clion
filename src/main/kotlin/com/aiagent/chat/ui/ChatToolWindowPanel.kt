@@ -55,7 +55,6 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
     private val cardLayout = layout as CardLayout
     private val CHAT_CARD = "CHAT_CARD"
     private val SETUP_CARD = "SETUP_CARD"
-    private val LANDING_CARD = "LANDING_CARD"
 
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     private val persistence = PersistenceManager(project.basePath ?: "")
@@ -245,30 +244,8 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
 
         val setupPanel = buildSetupPanel()
 
-        val landingPanel = LandingPanel(
-            onQuickAction = { action ->
-                enhancedInputPanel.setText(when (action) {
-                    "Explain Code" -> "Please explain the code in the currently open file."
-                    "Write Tests" -> "Please write unit tests for the currently open file."
-                    "Find Bugs" -> "Please analyze the currently open file for potential bugs and issues."
-                    "Refactor" -> "Please suggest refactoring improvements for the currently open file."
-                    "Explore Project" -> "Please explore the project structure and give me an overview."
-                    else -> action
-                })
-                cardLayout.show(this, CHAT_CARD)
-                enhancedInputPanel.requestFocus()
-            },
-            onConfigure = {
-                baseUrlField.text = settings.state.baseUrl
-                modelField.text = settings.state.model
-                apiKeyField.text = settings.getApiKey() ?: ""
-                cardLayout.show(this, SETUP_CARD)
-            }
-        )
-
         add(chatPanel, CHAT_CARD)
         add(setupPanel, SETUP_CARD)
-        add(landingPanel, LANDING_CARD)
 
         if (!settings.isApiKeySet()) {
             cardLayout.show(this, SETUP_CARD)
@@ -307,8 +284,8 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                     }
                 }
                 if (firstRestored) {
-                    // No sessions were actually restored (all empty), show landing
-                    cardLayout.show(this, LANDING_CARD)
+                    // No sessions were actually restored (all empty), show chat
+                    cardLayout.show(this, CHAT_CARD)
                 } else {
                     cardLayout.show(this, CHAT_CARD)
                 }
@@ -325,7 +302,7 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                     savedState.uiLog.forEach { addMessageBubbleToActiveTab(it.role, it.text, recordUiLog = false) }
                     cardLayout.show(this, CHAT_CARD)
                 } else {
-                    cardLayout.show(this, LANDING_CARD)
+                    cardLayout.show(this, CHAT_CARD)
                 }
             }
         }
@@ -422,6 +399,49 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
         }
         popup.add(phaseItem)
 
+        popup.addSeparator()
+
+        // Force context compression
+        val compressItem = JMenuItem("Compress Context", AllIcons.Actions.GC)
+        compressItem.addActionListener {
+            scope.launch {
+                try {
+                    val activeConv = conversationTabPanel.getActiveConversation()
+                    val messages = activeConv?.history?.toList() ?: emptyList()
+                    if (messages.isEmpty()) {
+                        SwingUtilities.invokeLater { statusLabel.text = "No messages to compress" }
+                        return@launch
+                    }
+                    val compactor = toolHandler.contextCompactor
+                    if (compactor == null) {
+                        SwingUtilities.invokeLater { statusLabel.text = "Compactor not available" }
+                        return@launch
+                    }
+                    val sizeBefore = messages.size
+                    SwingUtilities.invokeLater { statusLabel.text = "Compressing context ($sizeBefore messages)..." }
+                    val compacted = compactor.compact(messages)
+                    val sizeAfter = compacted.size
+                    // Update the conversation history in place
+                    if (activeConv != null) {
+                        activeConv.history.clear()
+                        activeConv.history.addAll(compacted)
+                    }
+                    usageTracker.recordCompaction(sizeBefore, sizeAfter)
+                    SwingUtilities.invokeLater {
+                        statusLabel.text = "Context compressed: $sizeBefore -> $sizeAfter messages"
+                        val activeConv2 = conversationTabPanel.getActiveConversation()
+                        val allMessages = activeConv2?.history?.toList() ?: emptyList()
+                        val summary = usageTracker.computeSummary(allMessages)
+                        usageCounterPanel.updateUsage(summary)
+                    }
+                } catch (e: Exception) {
+                    DebugLog.error("ChatToolWindow", "Manual context compression failed: ${e.message}", e)
+                    SwingUtilities.invokeLater { statusLabel.text = "Compression failed: ${e.message}" }
+                }
+            }
+        }
+        popup.add(compressItem)
+
         popup.show(source, 0, source.height)
     }
 
@@ -446,7 +466,7 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                     settings.state.baseUrl = baseUrlField.text
                     settings.state.model = modelField.text
                     settings.setApiKey(String(apiKeyField.password))
-                    cardLayout.show(this@ChatToolWindowPanel, LANDING_CARD)
+                    cardLayout.show(this@ChatToolWindowPanel, CHAT_CARD)
                     scope.launch {
                         try {
                             val client = ApiClient(
@@ -487,6 +507,7 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
 
         val bottomWrapper = JPanel(BorderLayout())
         bottomWrapper.isOpaque = false
+        bottomWrapper.border = JBUI.Borders.empty(0, 8)
         bottomWrapper.add(enhancedInputPanel, BorderLayout.CENTER)
 
         // "Content generated by AI" label below the prompt box

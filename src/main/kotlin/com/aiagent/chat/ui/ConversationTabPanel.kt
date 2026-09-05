@@ -72,9 +72,13 @@ class ConversationTabPanel : JBPanel<ConversationTabPanel>(BorderLayout()) {
                 add(createIconButton(AllIcons.General.Add, "New Session") {
                     onNewTab?.invoke()
                 })
-                // Dropdown arrow for more actions (info, rename, settings)
+                // Dropdown arrow for session-specific actions (info, rename)
                 add(createIconButton(createDropdownArrowIcon(), "More Actions") { source ->
                     showMoreActionsPopup(source)
+                })
+                // Hamburger menu icon for settings/menu (separate from session dropdown)
+                add(createIconButton(createHamburgerIcon(), "Settings & Menu") { source ->
+                    onMenuClick?.invoke(source)
                 })
             }
             add(rightButtonsPanel, BorderLayout.EAST)
@@ -268,6 +272,33 @@ class ConversationTabPanel : JBPanel<ConversationTabPanel>(BorderLayout()) {
     }
 
     /**
+     * Creates a hamburger menu icon (4 horizontal lines).
+     */
+    private fun createHamburgerIcon(): Icon {
+        return object : Icon {
+            override fun getIconWidth(): Int = 16
+            override fun getIconHeight(): Int = 16
+            override fun paintIcon(c: java.awt.Component?, g: java.awt.Graphics, x: Int, y: Int) {
+                val g2 = g.create() as java.awt.Graphics2D
+                try {
+                    g2.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON)
+                    g2.color = JBColor(0x666666, 0xBBBBBB)
+                    g2.stroke = java.awt.BasicStroke(1.5f)
+                    val leftX = x + 2
+                    val rightX = x + 14
+                    // 4 horizontal lines evenly spaced
+                    for (i in 0..3) {
+                        val lineY = y + 3 + i * 3.5f
+                        g2.drawLine(leftX, lineY.toInt(), rightX, lineY.toInt())
+                    }
+                } finally {
+                    g2.dispose()
+                }
+            }
+        }
+    }
+
+    /**
      * Shows a popup with "more actions": Session Info, Rename Session, Settings/Menu.
      */
     private fun showMoreActionsPopup(source: java.awt.Component) {
@@ -286,15 +317,6 @@ class ConversationTabPanel : JBPanel<ConversationTabPanel>(BorderLayout()) {
             onRenameRequest?.invoke(source)
         }
         popup.add(renameItem)
-
-        // Settings / Menu (full menu from parent)
-        popup.addSeparator()
-
-        val settingsItem = javax.swing.JMenuItem("Settings & Menu", AllIcons.General.Settings)
-        settingsItem.addActionListener {
-            onMenuClick?.invoke(source)
-        }
-        popup.add(settingsItem)
 
         popup.show(source, 0, source.height)
     }

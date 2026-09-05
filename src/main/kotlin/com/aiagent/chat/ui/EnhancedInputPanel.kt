@@ -76,7 +76,7 @@ class EnhancedInputPanel(
 
     init {
         isOpaque = false
-        border = JBUI.Borders.empty(6, 8, 6, 8)
+        border = JBUI.Borders.empty(4, 4, 4, 4)
 
         setupLayout()
         setupListeners()

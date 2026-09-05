@@ -18,7 +18,9 @@ java {
 tasks.withType<JavaCompile>().configureEach {
     options.isFork = true
 }
-
+tasks.test {
+    useJUnitPlatform()
+}
 group = "com.aiagent.chat"
 version = "0.46.5"
 

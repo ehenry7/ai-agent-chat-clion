@@ -84,65 +84,77 @@ class UsageCounterPanel(
         popup.isOpaque = true
         popup.background = JBColor.PanelBackground
 
-        // --- Summary tab content ---
+        val tabbedPane = JTabbedPane()
+        tabbedPane.background = JBColor.PanelBackground
+        tabbedPane.preferredSize = Dimension(300, 260)
+
+        // --- Summary tab ---
         val summaryPanel = JPanel().apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
-            border = JBUI.Borders.empty(8)
+            border = JBUI.Borders.empty(12)
             background = JBColor.PanelBackground
-            preferredSize = Dimension(280, 200)
         }
 
-        // Title
         summaryPanel.add(JLabel("Context Usage").apply {
-            font = font.deriveFont(Font.BOLD, 13f)
+            font = font.deriveFont(Font.BOLD, 16f)
             alignmentX = LEFT_ALIGNMENT
         })
-        summaryPanel.add(Box.createVerticalStrut(6))
+        summaryPanel.add(Box.createVerticalStrut(8))
 
         val pct = if (maxContextTokens > 0) (currentTokens * 100 / maxContextTokens) else 0
         summaryPanel.add(createRow("Usage", "$pct%"))
         summaryPanel.add(createRow("Current", formatTokenCount(currentTokens)))
         summaryPanel.add(createRow("Maximum", formatTokenCount(maxContextTokens)))
+        summaryPanel.add(Box.createVerticalGlue())
 
-        // Separator
-        summaryPanel.add(Box.createVerticalStrut(4))
-        summaryPanel.add(JSeparator().apply { alignmentX = LEFT_ALIGNMENT })
-        summaryPanel.add(Box.createVerticalStrut(4))
+        tabbedPane.addTab("Summary", summaryPanel)
 
-        // Token breakdown
+        // --- Breakdown tab ---
         val tokenMap = currentTokenMap
         if (tokenMap != null) {
-            summaryPanel.add(JLabel("Token Breakdown").apply {
-                font = font.deriveFont(Font.BOLD, 12f)
+            val breakdownPanel = JPanel().apply {
+                layout = BoxLayout(this, BoxLayout.Y_AXIS)
+                border = JBUI.Borders.empty(12)
+                background = JBColor.PanelBackground
+            }
+
+            breakdownPanel.add(JLabel("Token Breakdown").apply {
+                font = font.deriveFont(Font.BOLD, 16f)
                 alignmentX = LEFT_ALIGNMENT
             })
-            summaryPanel.add(Box.createVerticalStrut(4))
+            breakdownPanel.add(Box.createVerticalStrut(8))
 
-            // Stacked bar
-            summaryPanel.add(TokenBreakdownBar(tokenMap).apply { alignmentX = LEFT_ALIGNMENT })
-            summaryPanel.add(Box.createVerticalStrut(6))
+            breakdownPanel.add(TokenBreakdownBar(tokenMap).apply { alignmentX = LEFT_ALIGNMENT })
+            breakdownPanel.add(Box.createVerticalStrut(8))
 
-            // Category rows
             for (segment in tokenMap.segments) {
                 if (segment.tokens > 0) {
-                    summaryPanel.add(createCategoryRow(segment))
+                    breakdownPanel.add(createCategoryRow(segment))
                 }
             }
 
-            // Total
-            summaryPanel.add(Box.createVerticalStrut(4))
-            summaryPanel.add(JSeparator().apply { alignmentX = LEFT_ALIGNMENT })
-            summaryPanel.add(Box.createVerticalStrut(4))
-            summaryPanel.add(createRow("Total / Max",
+            breakdownPanel.add(Box.createVerticalStrut(6))
+            breakdownPanel.add(JSeparator().apply { alignmentX = LEFT_ALIGNMENT })
+            breakdownPanel.add(Box.createVerticalStrut(6))
+            breakdownPanel.add(createRow("Total / Max",
                 "${formatTokenCount(tokenMap.totalPromptTokens)} / ${formatTokenCount(tokenMap.maxContextTokens)}"))
+
+            tabbedPane.addTab("Breakdown", breakdownPanel)
         } else {
-            summaryPanel.add(JLabel("Send a message to see breakdown").apply {
+            val emptyPanel = JPanel().apply {
+                layout = BoxLayout(this, BoxLayout.Y_AXIS)
+                border = JBUI.Borders.empty(12)
+                background = JBColor.PanelBackground
+            }
+            emptyPanel.add(JLabel("Send a message to see breakdown").apply {
                 foreground = JBColor.GRAY
-                font = font.deriveFont(Font.ITALIC, 11f)
+                font = font.deriveFont(Font.ITALIC, 14f)
+                alignmentX = LEFT_ALIGNMENT
             })
+            tabbedPane.addTab("Breakdown", emptyPanel)
         }
 
-        popup.add(summaryPanel)
+        popup.add(tabbedPane)
         popup.show(this, 0, -popup.preferredSize.height - 2)
         breakdownPopup = popup
     }
@@ -153,8 +165,8 @@ class UsageCounterPanel(
             preferredSize = Dimension(260, 20)
             maximumSize = Dimension(260, 20)
         }
-        panel.add(JLabel(label).apply { font = font.deriveFont(Font.PLAIN, 11f) }, BorderLayout.WEST)
-        panel.add(JLabel(value).apply { font = font.deriveFont(Font.PLAIN, 11f) }, BorderLayout.EAST)
+        panel.add(JLabel(label).apply { font = font.deriveFont(Font.PLAIN, 14f) }, BorderLayout.WEST)
+        panel.add(JLabel(value).apply { font = font.deriveFont(Font.PLAIN, 14f) }, BorderLayout.EAST)
         return panel
     }
 
@@ -166,16 +178,16 @@ class UsageCounterPanel(
         }
         val leftPanel = JPanel(FlowLayout(FlowLayout.LEFT, 2, 0)).apply { isOpaque = false }
         leftPanel.add(ColorDot(getCategoryColor(segment.category)))
-        leftPanel.add(JLabel(segment.label).apply { font = font.deriveFont(Font.PLAIN, 11f) })
+        leftPanel.add(JLabel(segment.label).apply { font = font.deriveFont(Font.PLAIN, 14f) })
         panel.add(leftPanel, BorderLayout.WEST)
 
         val rightPanel = JPanel(FlowLayout(FlowLayout.RIGHT, 2, 0)).apply { isOpaque = false }
         rightPanel.add(JLabel(formatTokenCount(segment.tokens)).apply {
-            font = font.deriveFont(Font.PLAIN, 11f)
+            font = font.deriveFont(Font.PLAIN, 14f)
             foreground = JBColor.GRAY
         })
         rightPanel.add(JLabel("(${String.format("%.1f", segment.percentage)}%)").apply {
-            font = font.deriveFont(Font.PLAIN, 11f)
+            font = font.deriveFont(Font.PLAIN, 14f)
             foreground = JBColor.GRAY
         })
         panel.add(rightPanel, BorderLayout.EAST)
