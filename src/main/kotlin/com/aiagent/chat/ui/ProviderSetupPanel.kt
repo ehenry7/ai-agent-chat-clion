@@ -290,7 +290,7 @@ class ProviderSetupPanel(
             font = font.deriveFont(java.awt.Font.PLAIN, 11f)
             addActionListener { testConnectionForSelected() }
         }
-        val measureBtn = JButton("Measure").apply {
+        val measureBtn = JButton("Measure Timing").apply {
             font = font.deriveFont(java.awt.Font.PLAIN, 11f)
             toolTipText = "Measure TEE timing for all models of selected provider"
             addActionListener { measureModelsForSelected() }
@@ -316,11 +316,11 @@ class ProviderSetupPanel(
             isOpaque = false
         }
 
-        val cancelBtn = JButton("Cancel").apply {
+        val cancelBtn = JButton("Cancel Changes").apply {
             font = font.deriveFont(java.awt.Font.PLAIN, 12f)
             addActionListener { onCancel() }
         }
-        val saveBtn = JButton("Save and Start", AllIcons.Actions.Commit).apply {
+        val saveBtn = JButton("Save Settings", AllIcons.Actions.Commit).apply {
             font = font.deriveFont(java.awt.Font.BOLD, 12f)
             addActionListener { saveAll() }
         }
