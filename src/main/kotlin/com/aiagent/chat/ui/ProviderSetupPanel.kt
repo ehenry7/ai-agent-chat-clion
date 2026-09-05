@@ -108,11 +108,18 @@ class ProviderSetupPanel(
         border = JBUI.Borders.empty(8)
         background = JBColor.PanelBackground
 
-        // Top-aligned content with minimal spacing
-        val scrollContent = JPanel(GridLayout(0, 1, 0, 4)).apply { isOpaque = false }
+        // Top-aligned content — BoxLayout sizes each section to its content,
+        // does NOT distribute vertical space across all sections.
+        val scrollContent = JPanel().apply {
+            isOpaque = false
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+        }
+        scrollContent.add(buildGeneralParamsSection())
+        scrollContent.add(Box.createVerticalStrut(4))
         scrollContent.add(buildProviderSection())
+        scrollContent.add(Box.createVerticalStrut(4))
         scrollContent.add(buildModelSection())
-        scrollContent.add(buildAgentParamsSection())
+        scrollContent.add(Box.createVerticalGlue()) // push everything to top
 
         val scrollPane = JBScrollPane(scrollContent).apply {
             border = JBUI.Borders.empty()
@@ -158,12 +165,70 @@ class ProviderSetupPanel(
     // Section builders
     // ----------------------------------------------------------------
 
+    /**
+     * General Parameters section — placed on TOP of all other sections.
+     * Contains: Default Provider, Default Model, Max Steps.
+     * Sized to content, not stretched.
+     */
+    private fun buildGeneralParamsSection(): JComponent {
+        val outer = JPanel(GridLayout(0, 1, 2, 2)).apply {
+            isOpaque = false
+            border = JBUI.Borders.compound(
+                JBUI.Borders.customLine(JBColor.border(), 1),
+                JBUI.Borders.empty(6)
+            )
+            // Size to content, do not stretch
+            maximumSize = java.awt.Dimension(Int.MAX_VALUE, getPreferredSize().height)
+        }
+
+        outer.add(JBLabel("AI Agent General Parameters").apply {
+            font = font.deriveFont(java.awt.Font.BOLD, 13f)
+        })
+
+        // Default Provider row
+        val providerRow = JPanel(FlowLayout(FlowLayout.LEFT, 4, 2)).apply { isOpaque = false }
+        providerRow.add(JBLabel("Default Provider:").apply { font = font.deriveFont(java.awt.Font.PLAIN, 11f) })
+        defaultProviderCombo.preferredSize = java.awt.Dimension(150, 24)
+        defaultProviderCombo.addActionListener {
+            val selectedName = defaultProviderCombo.selectedItem as? String ?: return@addActionListener
+            val providers = settings.getProviders()
+            providers.forEach { p ->
+                val updated = p.copy(isDefault = (p.name == selectedName))
+                settings.addProvider(updated)
+            }
+        }
+        providerRow.add(defaultProviderCombo)
+        outer.add(providerRow)
+
+        // Default Model row
+        val modelRow = JPanel(FlowLayout(FlowLayout.LEFT, 4, 2)).apply { isOpaque = false }
+        modelRow.add(JBLabel("Default Model:").apply { font = font.deriveFont(java.awt.Font.PLAIN, 11f) })
+        defaultModelCombo.preferredSize = java.awt.Dimension(200, 24)
+        modelRow.add(defaultModelCombo)
+        outer.add(modelRow)
+
+        // Max Steps row
+        val stepsRow = JPanel(FlowLayout(FlowLayout.LEFT, 4, 2)).apply { isOpaque = false }
+        stepsRow.add(JBLabel("Max Steps:").apply { font = font.deriveFont(java.awt.Font.PLAIN, 11f) })
+        maxStepsField.preferredSize = java.awt.Dimension(60, 24)
+        stepsRow.add(maxStepsField)
+        stepsRow.add(JBLabel("(default: 25)").apply {
+            font = font.deriveFont(java.awt.Font.ITALIC, 10f)
+            foreground = JBColor(0x999999, 0x666666)
+        })
+        outer.add(stepsRow)
+
+        return outer
+    }
+
     private fun buildProviderSection(): JComponent {
         val outer = JPanel(BorderLayout(0, 4)).apply { isOpaque = false }
         outer.border = JBUI.Borders.compound(
             JBUI.Borders.customLine(JBColor.border(), 1),
             JBUI.Borders.empty(6)
         )
+        // Size to content, do not stretch
+        outer.maximumSize = java.awt.Dimension(Int.MAX_VALUE, outer.preferredSize.height)
 
         // Title row with buttons
         val titleRow = JPanel(BorderLayout()).apply { isOpaque = false }
@@ -193,22 +258,6 @@ class ProviderSetupPanel(
         }
         outer.add(tableScroll, BorderLayout.CENTER)
 
-        // Default provider selector below table
-        val defaultPanel = JPanel(FlowLayout(FlowLayout.LEFT, 4, 2)).apply { isOpaque = false }
-        defaultPanel.add(JBLabel("Default Provider:").apply { font = font.deriveFont(java.awt.Font.PLAIN, 11f) })
-        defaultProviderCombo.preferredSize = java.awt.Dimension(150, 24)
-        defaultProviderCombo.addActionListener {
-            // Update isDefault flags on providers
-            val selectedName = defaultProviderCombo.selectedItem as? String ?: return@addActionListener
-            val providers = settings.getProviders()
-            providers.forEach { p ->
-                val updated = p.copy(isDefault = (p.name == selectedName))
-                settings.addProvider(updated)
-            }
-        }
-        defaultPanel.add(defaultProviderCombo)
-        outer.add(defaultPanel, BorderLayout.SOUTH)
-
         return outer
     }
 
@@ -218,8 +267,10 @@ class ProviderSetupPanel(
             JBUI.Borders.customLine(JBColor.border(), 1),
             JBUI.Borders.empty(6)
         )
+        // Size to content, do not stretch
+        outer.maximumSize = java.awt.Dimension(Int.MAX_VALUE, outer.preferredSize.height)
 
-        // Title row
+        // Title row with buttons
         val titleRow = JPanel(BorderLayout()).apply { isOpaque = false }
         titleRow.add(JBLabel("Models").apply {
             font = font.deriveFont(java.awt.Font.BOLD, 13f)
@@ -246,52 +297,12 @@ class ProviderSetupPanel(
         titleRow.add(btnPanel, BorderLayout.EAST)
         outer.add(titleRow, BorderLayout.NORTH)
 
-        // Default model selector
-        val defaultModelPanel = JPanel(FlowLayout(FlowLayout.LEFT, 4, 2)).apply { isOpaque = false }
-        defaultModelPanel.add(JBLabel("Default Model:").apply { font = font.deriveFont(java.awt.Font.PLAIN, 11f) })
-        defaultModelCombo.preferredSize = java.awt.Dimension(200, 24)
-        defaultModelPanel.add(defaultModelCombo)
-        outer.add(defaultModelPanel, BorderLayout.NORTH)
-
-        // Wait, NORTH is already used by titleRow. Let me restructure.
-        // Actually BorderLayout.NORTH can only hold one component. Let me use a wrapper.
-        val northPanel = JPanel(GridLayout(0, 1, 0, 2)).apply { isOpaque = false }
-        northPanel.add(titleRow)
-        northPanel.add(defaultModelPanel)
-        outer.remove(titleRow) // remove the one we added above
-        outer.add(northPanel, BorderLayout.NORTH)
-
         // Model table in scroll
         val tableScroll = JBScrollPane(modelTable).apply {
             border = JBUI.Borders.empty()
             preferredSize = java.awt.Dimension(0, 150)
         }
         outer.add(tableScroll, BorderLayout.CENTER)
-
-        return outer
-    }
-
-    private fun buildAgentParamsSection(): JComponent {
-        val outer = JPanel(GridLayout(0, 1, 2, 2)).apply {
-            isOpaque = false
-            border = JBUI.Borders.compound(
-                JBUI.Borders.customLine(JBColor.border(), 1),
-                JBUI.Borders.empty(6)
-            )
-        }
-
-        outer.add(JBLabel("Agent Parameters").apply {
-            font = font.deriveFont(java.awt.Font.BOLD, 13f)
-        })
-        val stepsPanel = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0)).apply { isOpaque = false }
-        stepsPanel.add(JBLabel("Max Steps:").apply { font = font.deriveFont(java.awt.Font.PLAIN, 11f) })
-        maxStepsField.preferredSize = java.awt.Dimension(60, 24)
-        stepsPanel.add(maxStepsField)
-        stepsPanel.add(JBLabel("(default: 25)").apply {
-            font = font.deriveFont(java.awt.Font.ITALIC, 10f)
-            foreground = JBColor(0x999999, 0x666666)
-        })
-        outer.add(stepsPanel)
 
         return outer
     }
