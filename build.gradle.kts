@@ -31,7 +31,7 @@ tasks.test {
     }
 }
 group = "com.aiagent.chat"
-version = "0.46.5"
+version = "0.50.0"
 
 repositories {
     mavenCentral()
