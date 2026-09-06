@@ -694,14 +694,23 @@ class ProviderSetupPanel(
         // Save max steps
         settings.state.maxSteps = maxStepsField.text.trim().toIntOrNull() ?: 25
 
-        // Save provider enabled states from table
+        // Save provider enabled states, URL, and key from table
         val providers = settings.getProviders().toMutableList()
         for (i in 0 until providerTableModel.rowCount) {
             val name = providerTableModel.getValueAt(i, 1)?.toString() ?: continue
             val enabled = providerTableModel.getValueAt(i, 0) as? Boolean ?: true
+            val url = providerTableModel.getValueAt(i, 2)?.toString()?.trim() ?: ""
+            val keyCell = providerTableModel.getValueAt(i, 3)?.toString()?.trim() ?: ""
             val idx = providers.indexOfFirst { it.name == name }
             if (idx >= 0) {
-                providers[idx] = providers[idx].copy(enabled = enabled)
+                val existing = providers[idx]
+                // Only update key if user typed something new (not the "***" mask)
+                val newKey = if (keyCell.isNotEmpty() && keyCell != "***") keyCell else existing.apiKey
+                providers[idx] = existing.copy(
+                    enabled = enabled,
+                    baseUrl = if (url.isNotEmpty()) url else existing.baseUrl,
+                    apiKey = newKey
+                )
             }
         }
 
