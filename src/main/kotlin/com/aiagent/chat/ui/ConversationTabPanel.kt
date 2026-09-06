@@ -78,21 +78,32 @@ class ConversationTabPanel : JBPanel<ConversationTabPanel>(BorderLayout()) {
             )
         }
 
-        // Combined New Session + More panel with separator
-        val combinedPanel = JPanel(FlowLayout(FlowLayout.LEFT, 2, 0)).apply {
-            isOpaque = false
-            // New Session button (icon + text)
-            add(createTextIconButton(AllIcons.General.Add, "New", "New Session") {
-                onNewTab?.invoke()
+        // Combined New Session + More in one unified box
+        val newBtn = createTextIconButton(AllIcons.General.Add, "New", "New Session") {
+            onNewTab?.invoke()
+        }
+        val moreBtn = createTextIconButton(createDropdownArrowIcon(), "More", "More Actions") { source ->
+            showMoreActionsPopup(source)
+        }
+        // Strip individual borders so they look like one control
+        listOf(newBtn, moreBtn).forEach { btn ->
+            btn.isBorderPainted = false
+            btn.isContentAreaFilled = false
+            btn.isFocusPainted = false
+            btn.margin = JBUI.insets(4, 10)
+        }
+        val combinedPanel = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).apply {
+            isOpaque = true
+            background = JBColor(0xFFFFFF, 0x2B2B2B)
+            border = JBUI.Borders.customLine(JBColor.border(), 1)
+            add(newBtn)
+            // Thin internal divider (part of the box, not a separate component)
+            add(JPanel().apply {
+                isOpaque = true
+                background = JBColor.border()
+                preferredSize = Dimension(1, 22)
             })
-            // Separator
-            add(JSeparator(SwingConstants.VERTICAL).apply {
-                preferredSize = Dimension(2, 20)
-            })
-            // More Actions dropdown (icon + text)
-            add(createTextIconButton(createDropdownArrowIcon(), "More", "More Actions") { source ->
-                showMoreActionsPopup(source)
-            })
+            add(moreBtn)
         }
         buttonBar.add(combinedPanel)
 
