@@ -440,6 +440,8 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
             onDeleteSession = { meta ->
                 persistence.deleteSessionById(meta.id)
                 DebugLog.info("ChatToolWindow", "Deleted session: ${meta.id} (${meta.name})")
+                // Also remove the corresponding tab from the conversation tab panel
+                conversationTabPanel.closeConversation(meta.id)
                 // Refresh the landing screen session list
                 showLandingScreen()
             }
