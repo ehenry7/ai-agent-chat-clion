@@ -35,7 +35,7 @@ class TodoListPanel(
             JBUI.Borders.customLine(JBColor.border(), 1),
             JBUI.Borders.empty(6, 10)
         )
-        background = JBColor(0xF5F5F5, 0x1E1E1E)
+        background = ThemeUtils.TOOL_CONTENT_BG
 
         buildHeader()
         buildItems()

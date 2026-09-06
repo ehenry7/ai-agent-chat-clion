@@ -133,7 +133,7 @@ class LandingPanel(
         if (sessions.isEmpty()) {
             val emptyLabel = JBLabel("No saved sessions yet. Start a new conversation to begin.").apply {
                 font = font.deriveFont(java.awt.Font.ITALIC, 12f)
-                foreground = JBColor(0x999999, 0x666666)
+                foreground = ThemeUtils.MUTED_TEXT
                 border = JBUI.Borders.empty(12, 0)
             }
             val wrapper = JPanel(FlowLayout(FlowLayout.CENTER)).apply { isOpaque = false }
@@ -164,7 +164,7 @@ class LandingPanel(
             JBUI.Borders.customLine(JBColor.border(), 1),
             JBUI.Borders.empty(10, 14)
         )
-        card.background = JBColor(0xF8F8F8, 0x2A2A2A)
+        card.background = ThemeUtils.TOOL_CARD_BG
         card.cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
 
         val leftPanel = JPanel(BorderLayout()).apply { isOpaque = false }
@@ -215,7 +215,7 @@ class LandingPanel(
             }
 
             override fun mouseExited(e: MouseEvent) {
-                card.background = JBColor(0xF8F8F8, 0x2A2A2A)
+                card.background = ThemeUtils.TOOL_CARD_BG
                 card.isOpaque = false
             }
 
@@ -253,7 +253,7 @@ class LandingPanel(
             JBUI.Borders.customLine(JBColor.border(), 1),
             JBUI.Borders.empty(8, 12)
         )
-        card.background = JBColor(0xF8F8F8, 0x2A2A2A)
+        card.background = ThemeUtils.TOOL_CARD_BG
         card.cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
 
         val leftPanel = JPanel(FlowLayout(FlowLayout.LEFT, 10, 0)).apply {
@@ -286,7 +286,7 @@ class LandingPanel(
             }
 
             override fun mouseExited(e: MouseEvent) {
-                card.background = JBColor(0xF8F8F8, 0x2A2A2A)
+                card.background = ThemeUtils.TOOL_CARD_BG
                 card.isOpaque = false
             }
 

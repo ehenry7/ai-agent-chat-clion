@@ -37,7 +37,7 @@ class ToolCallCard(
         lineWrap = true
         wrapStyleWord = true
         font = java.awt.Font(java.awt.Font.MONOSPACED, java.awt.Font.PLAIN, 12)
-        background = JBColor(0xF5F5F5, 0x1E1E1E)
+        background = ThemeUtils.TOOL_CONTENT_BG
         border = JBUI.Borders.empty(6, 10)
         text = outputText
     }

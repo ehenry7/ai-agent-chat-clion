@@ -81,7 +81,7 @@ class UserMessagePanel(
         }
         val headerLabel = JBLabel("${referencedFiles.size} referenced file(s)").apply {
             font = font.deriveFont(java.awt.Font.ITALIC, 11f)
-            foreground = JBColor(0x666666, 0x999999)
+            foreground = ThemeUtils.SECONDARY_TEXT
             cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
         }
         header.add(headerLabel)

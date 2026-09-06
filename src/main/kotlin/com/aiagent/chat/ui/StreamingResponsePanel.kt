@@ -65,7 +65,7 @@ class StreamingResponsePanel(
 
         cursorLabel = JLabel("\u25AE").apply {
             font = font.deriveFont(java.awt.Font.BOLD, 13f)
-            foreground = JBColor(0x0066CC, 0x4A9EFF)
+            foreground = ThemeUtils.ACCENT
         }
 
         startCursorBlink()

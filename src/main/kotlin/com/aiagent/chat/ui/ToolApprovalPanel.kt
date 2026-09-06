@@ -55,7 +55,7 @@ class ToolApprovalPanel(
         val icon = JBLabel(getToolIcon())
         val title = JBLabel(getTitle()).apply {
             font = font.deriveFont(java.awt.Font.BOLD, 12f)
-            foreground = JBColor(0xE65100, 0xFFB74D)
+            foreground = ThemeUtils.WARNING
         }
 
         leftPanel.add(icon)

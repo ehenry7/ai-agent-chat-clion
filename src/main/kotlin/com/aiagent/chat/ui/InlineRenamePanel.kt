@@ -26,16 +26,16 @@ class InlineRenamePanel(
 
     init {
         border = JBUI.Borders.compound(
-            JBUI.Borders.customLine(JBColor(0x0066CC, 0x4A9EFF), 1),
+            JBUI.Borders.customLine(ThemeUtils.ACCENT, 1),
             JBUI.Borders.empty(8, 12)
         )
-        background = JBColor(0xF0F6FF, 0x1A2332)
+        background = JBColor.namedColor("Editor.background", JBColor(0xF0F6FF, 0x1A2332))
 
         val headerPanel = JPanel(BorderLayout()).apply {
             isOpaque = false
             val titleLabel = JBLabel("Rename Session").apply {
                 font = font.deriveFont(java.awt.Font.BOLD, 12f)
-                foreground = JBColor(0x0066CC, 0x4A9EFF)
+                foreground = ThemeUtils.ACCENT
                 icon = AllIcons.Actions.Edit
             }
             add(titleLabel, BorderLayout.WEST)

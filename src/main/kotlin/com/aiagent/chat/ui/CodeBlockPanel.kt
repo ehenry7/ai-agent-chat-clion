@@ -42,7 +42,7 @@ class CodeBlockPanel(
             JBUI.Borders.customLine(JBColor.border(), 1),
             JBUI.Borders.empty(0)
         )
-        background = JBColor(0x2B2B2B, 0x1E1E1E)
+        background = ThemeUtils.CODE_BODY_BG
 
         buildHeader()
         buildEditor()
@@ -51,7 +51,7 @@ class CodeBlockPanel(
     private fun buildHeader() {
         val header = JPanel(BorderLayout())
         header.isOpaque = true
-        header.background = JBColor(0x3C3F41, 0x2D2D2D)
+        header.background = ThemeUtils.CODE_HEADER_BG
         header.border = JBUI.Borders.empty(4, 8)
 
         // Left: language label / file path
@@ -62,7 +62,7 @@ class CodeBlockPanel(
         val labelText = filePath ?: language
         val langLabel = JBLabel(labelText).apply {
             font = font.deriveFont(java.awt.Font.BOLD, 11f)
-            foreground = JBColor(0xCCCCCC, 0xAAAAAA)
+            foreground = ThemeUtils.CODE_HEADER_FG
             icon = AllIcons.FileTypes.Any_type
         }
         leftPanel.add(langLabel)
@@ -146,7 +146,7 @@ class CodeBlockPanel(
             isViewer = true
             setOneLineMode(false)
             border = JBUI.Borders.empty(4, 8)
-            background = JBColor(0x2B2B2B, 0x1E1E1E)
+            background = ThemeUtils.CODE_BODY_BG
         }
 
         // Wrap the editor in a scroll pane with a max height so long code

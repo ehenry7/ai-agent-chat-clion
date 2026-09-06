@@ -639,7 +639,7 @@ class EnhancedInputPanel(
         // Status label at bottom
         val statusLabel = JBLabel("Click a model to select it").apply {
             border = JBUI.Borders.empty(4, 8)
-            foreground = JBColor(0x666666, 0x999999)
+            foreground = ThemeUtils.SECONDARY_TEXT
         }
 
         popup.contentPane.add(scrollPane, BorderLayout.CENTER)
@@ -788,7 +788,7 @@ class EnhancedInputPanel(
             val g2 = g.create() as Graphics2D
             try {
                 g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-                g2.color = JBColor(0xE8EAF0, 0x333740)
+                g2.color = JBColor.namedColor("TextField.background", JBColor(0xE8EAF0, 0x333740))
                 g2.fillRoundRect(0, 0, width - 1, height - 1, 6, 6)
             } finally {
                 g2.dispose()

@@ -212,7 +212,7 @@ class ResponseMessagePanel(
         val pane = HtmlPaneFactory.createHtmlPane(
             htmlBody = htmlContent,
             bgColor = background,
-            fgColor = JBColor(0x333333, 0xDDDDDD),
+            fgColor = ThemeUtils.PRIMARY_TEXT,
             fontSize = fontSize
         )
         return pane

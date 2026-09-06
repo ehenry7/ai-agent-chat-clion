@@ -290,7 +290,7 @@ class ConversationTabPanel : JBPanel<ConversationTabPanel>(BorderLayout()) {
             isFocusPainted = false
             margin = JBUI.insets(4, 8)
             font = font.deriveFont(java.awt.Font.PLAIN, 12f)
-            foreground = JBColor(0x333333, 0xCCCCCC)
+            foreground = ThemeUtils.PRIMARY_TEXT
             cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
             addActionListener { e -> onModelStatusClick?.invoke(e.source as java.awt.Component) }
             modelStatusButton = this
@@ -318,7 +318,7 @@ class ConversationTabPanel : JBPanel<ConversationTabPanel>(BorderLayout()) {
                 val g2 = g.create() as java.awt.Graphics2D
                 try {
                     g2.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON)
-                    g2.color = JBColor(0x666666, 0xBBBBBB)
+                    g2.color = ThemeUtils.SECONDARY_TEXT
                     // Draw a downward triangle (dropdown arrow)
                     val midX = x + 8
                     val topY = y + 4
@@ -342,7 +342,7 @@ class ConversationTabPanel : JBPanel<ConversationTabPanel>(BorderLayout()) {
                 val g2 = g.create() as java.awt.Graphics2D
                 try {
                     g2.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON)
-                    g2.color = JBColor(0x666666, 0xBBBBBB)
+                    g2.color = ThemeUtils.SECONDARY_TEXT
                     g2.stroke = java.awt.BasicStroke(1.5f)
                     val leftX = x + 2
                     val rightX = x + 14

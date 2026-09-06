@@ -32,7 +32,7 @@ class SummarizationEventPanel(
             JBUI.Borders.customLine(ThemeUtils.SUBTLE_BORDER, 1),
             JBUI.Borders.empty(6, 10)
         )
-        background = JBColor(0xF5F5F5, 0x2D2D2D)
+        background = ThemeUtils.TOOL_CARD_BG
 
         val header = JPanel(BorderLayout(6, 0)).apply {
             isOpaque = false

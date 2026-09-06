@@ -38,12 +38,12 @@ class ToolCallsSection : JBPanel<ToolCallsSection>(BorderLayout()) {
     private val maxVisibleWhileRunning = 4
 
     private val chevronLabel = JBLabel(AllIcons.General.ChevronRight).apply {
-        foreground = JBColor(0x666666, 0x999999)
+        foreground = ThemeUtils.SECONDARY_TEXT
     }
 
     private val titleLabel = JBLabel("Tool Calls (0)").apply {
         font = font.deriveFont(java.awt.Font.BOLD, 12f)
-        foreground = JBColor(0x555555, 0xAAAAAA)
+        foreground = ThemeUtils.PRIMARY_TEXT
     }
 
     private val headerPanel = JPanel(FlowLayout(FlowLayout.LEFT, 4, 2)).apply {

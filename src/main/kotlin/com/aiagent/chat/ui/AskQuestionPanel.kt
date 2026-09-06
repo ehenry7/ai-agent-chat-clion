@@ -32,10 +32,10 @@ class AskQuestionPanel(
 
     init {
         border = JBUI.Borders.compound(
-            JBUI.Borders.customLine(JBColor(0x0066CC, 0x4A9EFF), 1),
+            JBUI.Borders.customLine(ThemeUtils.ACCENT, 1),
             JBUI.Borders.empty(8, 12)
         )
-        background = JBColor(0xF0F6FF, 0x1A2332)
+        background = JBColor.namedColor("Editor.background", JBColor(0xF0F6FF, 0x1A2332))
 
         val headerPanel = JPanel(BorderLayout()).apply {
             isOpaque = false
@@ -44,7 +44,7 @@ class AskQuestionPanel(
             }
             val titleLabel = JBLabel("Agent Question").apply {
                 font = font.deriveFont(java.awt.Font.BOLD, 12f)
-                foreground = JBColor(0x0066CC, 0x4A9EFF)
+                foreground = ThemeUtils.ACCENT
             }
             val leftPanel = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0)).apply {
                 isOpaque = false
