@@ -71,7 +71,8 @@ object SlashCommands {
         "clear" to Command("clear", "Clear current conversation"),
         "new" to Command("new", "Start new session"),
         "logs" to Command("logs", "Show recent IDE log entries"),
-        "health" to Command("health", "Show runtime health diagnostics")
+        "health" to Command("health", "Show runtime health diagnostics"),
+        "plan" to Command("plan", "Display the current plan and its status")
     )
 
     fun isLocalCommand(text: String): Boolean {
@@ -93,6 +94,7 @@ object SlashCommands {
             "new" -> SlashCommandResult("New session started.", SlashCommandAction.NEW_SESSION)
             "logs" -> SlashCommandResult(formatLogs(parts.drop(1)))
             "health" -> SlashCommandResult(formatHealth())
+            "plan" -> SlashCommandResult(formatPlan(context))
             else -> null
         }
     }
@@ -204,6 +206,34 @@ object SlashCommands {
         lines.add("- **Base URL:** `${context.baseUrl}`")
         if (context.multiProviderEnabled) {
             lines.add("- **Multi-Provider:** Enabled (${context.providers.size} providers)")
+        }
+
+        return lines.joinToString("\n")
+    }
+
+    fun formatPlan(context: SlashCommandContext): String {
+        if (!context.hasPlan) {
+            return "## Plan\n\n_No active plan. The agent will create one when needed._"
+        }
+
+        val lines = mutableListOf<String>()
+        lines.add("## Current Plan")
+        lines.add("")
+
+        // planSummary is the toSystemPromptSection() output which includes
+        // <current_plan> tags, the markdown checklist, and a progress line.
+        // Strip the tags and render the inner content.
+        val summary = context.planSummary
+            .removePrefix("<current_plan>")
+            .removeSuffix("</current_plan>")
+            .trim()
+
+        if (summary.isNotBlank()) {
+            lines.add("```")
+            lines.add(summary)
+            lines.add("```")
+        } else {
+            lines.add("_Plan exists but has no steps._")
         }
 
         return lines.joinToString("\n")
