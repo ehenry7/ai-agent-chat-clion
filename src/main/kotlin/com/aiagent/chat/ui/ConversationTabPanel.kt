@@ -52,6 +52,8 @@ class ConversationTabPanel : JBPanel<ConversationTabPanel>(BorderLayout()) {
     var onLastTabClosed: (() -> Unit)? = null
     /** Called when user wants to select a model from the More dropdown. */
     var onSelectModel: (() -> Unit)? = null
+    /** Called when user wants to disable the current model from the More dropdown. */
+    var onDisableModel: (() -> Unit)? = null
     /** Called when user wants to go to the sessions/landing view. */
     var onSessionsView: (() -> Unit)? = null
     /** Called when user wants to compress context. */
@@ -382,6 +384,14 @@ class ConversationTabPanel : JBPanel<ConversationTabPanel>(BorderLayout()) {
             isEnabled = false
         }
         popup.add(endpointItem)
+
+        // Disable current model
+        val disableModelItem = javax.swing.JMenuItem("Disable Current Model", AllIcons.Actions.Forward)
+        disableModelItem.toolTipText = "Disable the current model and switch to another from the same provider"
+        disableModelItem.addActionListener {
+            onDisableModel?.invoke()
+        }
+        popup.add(disableModelItem)
 
         popup.addSeparator()
 

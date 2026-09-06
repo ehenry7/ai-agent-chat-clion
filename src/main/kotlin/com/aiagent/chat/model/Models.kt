@@ -46,7 +46,7 @@ enum class ApprovalMode {
         return when (this) {
             STRICT     -> true
             BALANCED   -> category != ToolCategory.READ_ONLY
-            PERMISSIVE -> category == ToolCategory.DANGEROUS
+            PERMISSIVE -> false  // No category-based approval; CommandSafety still guards dangerous commands
             AUTOPILOT  -> false
         }
     }

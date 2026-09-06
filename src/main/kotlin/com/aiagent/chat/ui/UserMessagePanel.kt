@@ -7,6 +7,7 @@ import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
 import java.awt.FlowLayout
 import javax.swing.Icon
+import javax.swing.JButton
 import javax.swing.JComponent
 import javax.swing.JPanel
 import javax.swing.SwingUtilities
@@ -16,7 +17,8 @@ import javax.swing.SwingUtilities
  */
 class UserMessagePanel(
     private val messageText: String,
-    private val referencedFiles: List<String> = emptyList()
+    private val referencedFiles: List<String> = emptyList(),
+    private val onEdit: (() -> Unit)? = null
 ) : BaseMessagePanel("You", "user") {
 
     override fun getRoleIcon(): Icon = AllIcons.General.User
@@ -25,6 +27,21 @@ class UserMessagePanel(
 
     init {
         buildBody()
+        // Add edit (pencil) button to the actions panel after buildBody
+        if (onEdit != null) {
+            val editBtn = JButton(AllIcons.Actions.Edit).apply {
+                toolTipText = "Edit this prompt and branch from here"
+                isContentAreaFilled = false
+                isBorderPainted = false
+                isFocusPainted = false
+                margin = JBUI.insets(2)
+                preferredSize = java.awt.Dimension(24, 24)
+                cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
+                addActionListener { onEdit?.invoke() }
+            }
+            // Insert edit button as the first action (before copy)
+            actionsPanel.add(editBtn, 0)
+        }
     }
 
     override fun buildBody() {

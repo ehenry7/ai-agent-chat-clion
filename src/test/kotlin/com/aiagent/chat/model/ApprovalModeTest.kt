@@ -52,8 +52,10 @@ class ApprovalModeTest {
     }
 
     @Test
-    fun `PERMISSIVE requires approval for DANGEROUS`() {
-        assertTrue(ApprovalMode.PERMISSIVE.requiresApproval(ToolCategory.DANGEROUS))
+    fun `PERMISSIVE does not require approval for DANGEROUS`() {
+        // PERMISSIVE mode: no category-based approval at all.
+        // CommandSafety (Layer 3) still guards truly dangerous commands via deny/confirm patterns.
+        assertFalse(ApprovalMode.PERMISSIVE.requiresApproval(ToolCategory.DANGEROUS))
     }
 
     @Test

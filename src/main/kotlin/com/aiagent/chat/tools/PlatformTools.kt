@@ -80,7 +80,16 @@ class PlatformToolHandler(
 
     fun resolveContainedFile(relPath: String): File {
         val baseDir = File(project.basePath ?: throw IllegalStateException("No project base path"))
-        val target = File(baseDir, relPath).canonicalFile
+        // Sanitize: trim whitespace, normalize separators, remove trailing slashes
+        val sanitized = relPath.trim()
+            .replace("\\", "/")
+            .removeSuffix("/")
+            .ifEmpty { "." }
+        val target = try {
+            File(baseDir, sanitized).canonicalFile
+        } catch (e: java.io.IOException) {
+            throw SecurityException("Invalid path '$relPath': ${e.message}")
+        }
         if (!target.path.startsWith(baseDir.canonicalPath)) {
             throw SecurityException("Path escapes workspace: $relPath")
         }
