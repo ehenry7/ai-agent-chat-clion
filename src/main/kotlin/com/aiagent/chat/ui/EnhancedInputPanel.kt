@@ -85,8 +85,10 @@ class EnhancedInputPanel(
     /** Data for the model tree popup: provider -> models with timing. */
     data class ModelTreeEntry(
         val providerName: String,
+        val providerId: String,
         val modelName: String,
         val modelId: String,
+        val rawModelId: String,
         val latencyMs: Long,
         val measured: Boolean
     )
@@ -394,9 +396,9 @@ class EnhancedInputPanel(
         val entries = models.map { name ->
             val parts = name.split("/", limit = 2)
             if (parts.size == 2) {
-                ModelTreeEntry(parts[0], parts[1], name, 0, false)
+                ModelTreeEntry(parts[0], "", parts[1], name, parts[1], 0, false)
             } else {
-                ModelTreeEntry("Default", name, name, 0, false)
+                ModelTreeEntry("Default", "", name, name, name, 0, false)
             }
         }
         updateModelTree(entries)
@@ -407,7 +409,7 @@ class EnhancedInputPanel(
             modelTreeData = entries
             // Update button text to show current model
             val current = currentModel()
-            val match = entries.find { it.modelId == current }
+            val match = entries.find { it.rawModelId == current }
             modelSelector.text = match?.let { "${it.providerName}/${it.modelName}" } ?: current.take(20)
         }
     }
@@ -446,10 +448,11 @@ class EnhancedInputPanel(
 
         // Define selectModel before tree listeners
         fun selectModel(entry: ModelTreeEntry) {
-            val modelId = entry.modelId
-            if (modelId != currentModel()) {
-                DebugLog.info("EnhancedInputPanel", "Model tree selected '$modelId'")
-                onModelChange(modelId)
+            // Use rawModelId (without provider prefix) for the API call
+            val rawId = entry.rawModelId
+            if (rawId != currentModel()) {
+                DebugLog.info("EnhancedInputPanel", "Model tree selected: provider=${entry.providerName}, rawModelId='$rawId'")
+                onModelChange(rawId)
             }
             modelSelector.text = "${entry.providerName}/${entry.modelName}"
             popup.dispose()

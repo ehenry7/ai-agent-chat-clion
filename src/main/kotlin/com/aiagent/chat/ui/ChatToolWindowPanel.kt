@@ -79,7 +79,19 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
         isRunning = { activeEngineJob?.isActive == true },
         currentModel = { settings.state.model },
         onModelChange = { newModel ->
+            // newModel is the raw model ID (without provider prefix)
             settings.state.model = newModel
+            // Find the provider that owns this model and switch baseUrl/apiKey
+            val provider = settings.getProviders()
+                .filter { it.enabled }
+                .find { p -> p.models.any { it.id == newModel } }
+            if (provider != null) {
+                settings.state.baseUrl = provider.baseUrl
+                if (provider.apiKey.isNotBlank()) {
+                    settings.setApiKey(provider.apiKey)
+                }
+                DebugLog.info("ChatToolWindow", "Model switched to '$newModel', provider='${provider.name}', baseUrl='${provider.baseUrl}'")
+            }
             conversationTabPanel.updateModelStatus(newModel)
         }
     )
@@ -106,8 +118,10 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                     p.models.filter { it.enabled }.map { m ->
                         EnhancedInputPanel.ModelTreeEntry(
                             providerName = p.name,
+                            providerId = p.id,
                             modelName = m.name.ifBlank { m.id },
                             modelId = "${p.name}/${m.name.ifBlank { m.id }}",
+                            rawModelId = m.id,
                             latencyMs = m.latencyMs,
                             measured = m.measured
                         )
@@ -498,8 +512,10 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                 p.models.filter { it.enabled }.map { m ->
                     EnhancedInputPanel.ModelTreeEntry(
                         providerName = p.name,
+                        providerId = p.id,
                         modelName = m.name.ifBlank { m.id },
                         modelId = "${p.name}/${m.name.ifBlank { m.id }}",
+                        rawModelId = m.id,
                         latencyMs = m.latencyMs,
                         measured = m.measured
                     )
