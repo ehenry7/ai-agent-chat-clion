@@ -75,11 +75,18 @@ class ProviderSetupPanel(
             val modelId = modelTableModel.getValueAt(modelRow, 2)?.toString() ?: return null
             val provider = settings.getProviders().find { p -> p.models.any { it.id == modelId } }
             val model = provider?.models?.find { it.id == modelId }
-            return if (model != null && model.measured && model.latencyMs > 0) {
-                "Measured latency: " + model.latencyMs + "ms"
-            } else {
-                "Not measured"
+            if (model == null) return null
+            val sb = StringBuilder()
+            sb.append("Name: ${model.name}")
+            if (model.id != model.name) {
+                sb.append("\nID: ${model.id}")
             }
+            sb.append("\nType: ${model.sizeTag.displayName}")
+            sb.append("\nContext: ${model.maxContextTokens}")
+            if (model.measured && model.latencyMs > 0) {
+                sb.append("\nLatency: ${model.latencyMs}ms")
+            }
+            return sb.toString()
         }
     }.apply {
         columnModel.getColumn(0).headerValue = ""
