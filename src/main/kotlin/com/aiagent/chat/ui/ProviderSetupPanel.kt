@@ -17,6 +17,7 @@ import com.intellij.util.ui.JBUI
 import kotlinx.coroutines.*
 import java.awt.BorderLayout
 import java.awt.CardLayout
+import java.awt.Dimension
 import java.awt.FlowLayout
 import java.awt.GridLayout
 import javax.swing.*
@@ -131,6 +132,9 @@ class ProviderSetupPanel(
     // --- Currently selected provider for model table display ---
     private var selectedProviderId: String? = null
 
+    // Flag to suppress table model listener during programmatic updates
+    private var suppressTableListener = false
+
     // --- Scroll pane references for dynamic sizing ---
     private var providerTableScroll: JBScrollPane? = null
     private var modelTableScroll: JBScrollPane? = null
@@ -185,6 +189,28 @@ class ProviderSetupPanel(
                     selectedProviderId = provider.id
                     modelSectionLabel.text = "Models of: ${provider.name}"
                     refreshModelTable(provider)
+                }
+            }
+        }
+
+        // Auto-refresh models when provider table cells are edited (URL, Key, Name, Enabled)
+        providerTableModel.addTableModelListener { e ->
+            if (suppressTableListener) return@addTableModelListener
+            if (e.type == javax.swing.event.TableModelEvent.UPDATE) {
+                val row = e.firstRow
+                if (row < 0 || row >= providerTableModel.rowCount) return@addTableModelListener
+                val name = providerTableModel.getValueAt(row, 1)?.toString() ?: return@addTableModelListener
+                // Find the provider by name and trigger a model refresh
+                val provider = settings.getProviders().find { it.name == name }
+                if (provider != null) {
+                    // Read the edited URL from the table
+                    val editedUrl = providerTableModel.getValueAt(row, 2)?.toString()?.trim() ?: ""
+                    val editedKeyCell = providerTableModel.getValueAt(row, 3)?.toString()?.trim() ?: ""
+                    val updatedProvider = provider.copy(
+                        baseUrl = if (editedUrl.isNotEmpty()) editedUrl else provider.baseUrl,
+                        apiKey = if (editedKeyCell.isNotEmpty() && editedKeyCell != "***") editedKeyCell else provider.apiKey
+                    )
+                    autoRefreshModels(updatedProvider)
                 }
             }
         }
@@ -350,6 +376,7 @@ class ProviderSetupPanel(
     // ----------------------------------------------------------------
 
     private fun refreshProviderTable() {
+        suppressTableListener = true
         providerTableModel.rowCount = 0
         for (p in settings.getProviders()) {
             providerTableModel.addRow(arrayOf(
@@ -359,6 +386,7 @@ class ProviderSetupPanel(
                 if (p.apiKey.isNotBlank()) "***" else ""
             ))
         }
+        suppressTableListener = false
         // Set checkbox renderer/editor for Enabled column
         providerTable.columnModel.getColumn(0).cellRenderer = CheckboxRenderer()
         providerTable.columnModel.getColumn(0).cellEditor = CheckboxEditor()
@@ -558,20 +586,75 @@ class ProviderSetupPanel(
             setStatus("Select a provider first")
             return
         }
-        setStatus("Testing connection to '${provider.name}'...")
+
+        // Read edited values from the table (in case user edited URL/key but hasn't saved yet)
+        val row = providerTable.selectedRow
+        val modelRow = if (row >= 0) providerTable.convertRowIndexToModel(row) else -1
+        val editedProvider = if (modelRow >= 0) {
+            val editedUrl = providerTableModel.getValueAt(modelRow, 2)?.toString()?.trim() ?: provider.baseUrl
+            val editedKeyCell = providerTableModel.getValueAt(modelRow, 3)?.toString()?.trim() ?: ""
+            val newKey = if (editedKeyCell.isNotEmpty() && editedKeyCell != "***") editedKeyCell else provider.apiKey
+            provider.copy(baseUrl = editedUrl, apiKey = newKey)
+        } else provider
+
+        val parentFrame = SwingUtilities.getWindowAncestor(this) as? JFrame
+
+        // Show "testing" popup
+        val testDialog = JDialog(parentFrame, "Testing Connection", false).apply {
+            defaultCloseOperation = JDialog.DO_NOTHING_ON_CLOSE
+            isResizable = false
+            val content = JPanel(BorderLayout(8, 8)).apply {
+                border = JBUI.Borders.empty(16)
+                background = JBColor.PanelBackground
+            }
+            val msgLabel = JBLabel("Testing connection to '${editedProvider.name}'...").apply {
+                font = font.deriveFont(java.awt.Font.PLAIN, 13f)
+            }
+            val urlLabel = JBLabel("URL: ${editedProvider.baseUrl}").apply {
+                font = font.deriveFont(java.awt.Font.PLAIN, 11f)
+                foreground = JBColor(0x666666, 0x999999)
+            }
+            val progressBar = JProgressBar().apply {
+                isIndeterminate = true
+                preferredSize = Dimension(300, 20)
+            }
+            content.add(msgLabel, BorderLayout.NORTH)
+            content.add(urlLabel, BorderLayout.CENTER)
+            content.add(progressBar, BorderLayout.SOUTH)
+            contentPane = content
+            pack()
+            setLocationRelativeTo(parentFrame)
+        }
+        testDialog.isVisible = true
+
+        setStatus("Testing connection to '${editedProvider.name}'...")
         scope.launch {
-            val result = onTestConnection?.invoke(provider)
+            val result = onTestConnection?.invoke(editedProvider)
             SwingUtilities.invokeLater {
+                testDialog.dispose()
+
                 if (result?.success == true && result.authType != null) {
                     // Auto-set auth type (Requirement 3)
-                    val updated = provider.copy(authHeaderType = result.authType)
+                    val updated = editedProvider.copy(authHeaderType = result.authType)
                     settings.addProvider(updated)
                     setStatus("Connection OK (${result.latencyMs}ms), auth: ${result.authType}")
+
+                    // Show result popup
+                    showResultPopup(parentFrame, "Connection Successful",
+                        "Provider: ${editedProvider.name}\n" +
+                        "URL: ${editedProvider.baseUrl}\n" +
+                        "Latency: ${result.latencyMs}ms\n" +
+                        "Auth Type: ${result.authType}\n\n" +
+                        "Models will be refreshed automatically.")
 
                     // Requirement 4: auto-fetch models after successful test
                     syncModelsForProvider(updated)
                 } else {
                     setStatus("Connection failed: ${result?.message ?: "unknown error"}")
+                    showResultPopup(parentFrame, "Connection Failed",
+                        "Provider: ${editedProvider.name}\n" +
+                        "URL: ${editedProvider.baseUrl}\n" +
+                        "Error: ${result?.message ?: "unknown error"}")
                 }
             }
         }
@@ -590,22 +673,171 @@ class ProviderSetupPanel(
     }
 
     private fun syncModelsForProvider(provider: ProviderConfig) {
+        val parentFrame = SwingUtilities.getWindowAncestor(this) as? JFrame
+
+        // Show "refreshing" popup
+        val syncDialog = JDialog(parentFrame, "Refreshing Models", false).apply {
+            defaultCloseOperation = JDialog.DO_NOTHING_ON_CLOSE
+            isResizable = false
+            val content = JPanel(BorderLayout(8, 8)).apply {
+                border = JBUI.Borders.empty(16)
+                background = JBColor.PanelBackground
+            }
+            val msgLabel = JBLabel("Refreshing models from '${provider.name}'...").apply {
+                font = font.deriveFont(java.awt.Font.PLAIN, 13f)
+            }
+            val urlLabel = JBLabel("URL: ${provider.baseUrl}").apply {
+                font = font.deriveFont(java.awt.Font.PLAIN, 11f)
+                foreground = JBColor(0x666666, 0x999999)
+            }
+            val progressBar = JProgressBar().apply {
+                isIndeterminate = true
+                preferredSize = Dimension(300, 20)
+            }
+            content.add(msgLabel, BorderLayout.NORTH)
+            content.add(urlLabel, BorderLayout.CENTER)
+            content.add(progressBar, BorderLayout.SOUTH)
+            contentPane = content
+            pack()
+            setLocationRelativeTo(parentFrame)
+        }
+        syncDialog.isVisible = true
+
         setStatus("Syncing models for '${provider.name}'...")
         scope.launch {
             try {
                 val synced = onSyncModels?.invoke(provider)
                 SwingUtilities.invokeLater {
+                    syncDialog.dispose()
                     if (synced != null) {
                         onModelsSynced(synced)
                         setStatus("Synced ${synced.models.size} models from '${provider.name}'")
+                        showResultPopup(parentFrame, "Models Refreshed",
+                            "Provider: ${provider.name}\n" +
+                            "URL: ${provider.baseUrl}\n" +
+                            "Models found: ${synced.models.size}")
                     } else {
                         setStatus("Sync failed")
+                        showResultPopup(parentFrame, "Model Refresh Failed",
+                            "Provider: ${provider.name}\n" +
+                            "URL: ${provider.baseUrl}\n" +
+                            "Error: Could not fetch models. Check URL and API key.")
                     }
                 }
             } catch (e: Exception) {
-                SwingUtilities.invokeLater { setStatus("Sync error: ${e.message}") }
+                SwingUtilities.invokeLater {
+                    syncDialog.dispose()
+                    setStatus("Sync error: ${e.message}")
+                    showResultPopup(parentFrame, "Model Refresh Error",
+                        "Provider: ${provider.name}\n" +
+                        "URL: ${provider.baseUrl}\n" +
+                        "Error: ${e.message}")
+                }
             }
         }
+    }
+
+    /**
+     * Auto-refresh models when provider settings are edited in the table.
+     * Shows a popup during the refresh.
+     */
+    private fun autoRefreshModels(provider: ProviderConfig) {
+        val parentFrame = SwingUtilities.getWindowAncestor(this) as? JFrame
+
+        // Show "refreshing" popup
+        val refreshDialog = JDialog(parentFrame, "Refreshing Models", false).apply {
+            defaultCloseOperation = JDialog.DO_NOTHING_ON_CLOSE
+            isResizable = false
+            val content = JPanel(BorderLayout(8, 8)).apply {
+                border = JBUI.Borders.empty(16)
+                background = JBColor.PanelBackground
+            }
+            val msgLabel = JBLabel("Provider settings changed. Refreshing models from '${provider.name}'...").apply {
+                font = font.deriveFont(java.awt.Font.PLAIN, 13f)
+            }
+            val urlLabel = JBLabel("URL: ${provider.baseUrl}").apply {
+                font = font.deriveFont(java.awt.Font.PLAIN, 11f)
+                foreground = JBColor(0x666666, 0x999999)
+            }
+            val progressBar = JProgressBar().apply {
+                isIndeterminate = true
+                preferredSize = Dimension(350, 20)
+            }
+            content.add(msgLabel, BorderLayout.NORTH)
+            content.add(urlLabel, BorderLayout.CENTER)
+            content.add(progressBar, BorderLayout.SOUTH)
+            contentPane = content
+            pack()
+            setLocationRelativeTo(parentFrame)
+        }
+        refreshDialog.isVisible = true
+
+        setStatus("Auto-refreshing models for '${provider.name}' (settings changed)...")
+        scope.launch {
+            try {
+                val synced = onSyncModels?.invoke(provider)
+                SwingUtilities.invokeLater {
+                    refreshDialog.dispose()
+                    if (synced != null) {
+                        // Update the provider in settings with synced models
+                        settings.addProvider(synced)
+                        onModelsSynced(synced)
+                        setStatus("Auto-refreshed ${synced.models.size} models from '${provider.name}'")
+                        showResultPopup(parentFrame, "Models Refreshed",
+                            "Provider: ${provider.name}\n" +
+                            "URL: ${provider.baseUrl}\n" +
+                            "Models found: ${synced.models.size}\n\n" +
+                            "Model list updated with new settings.")
+                    } else {
+                        setStatus("Auto-refresh failed for '${provider.name}'")
+                        showResultPopup(parentFrame, "Model Refresh Failed",
+                            "Provider: ${provider.name}\n" +
+                            "URL: ${provider.baseUrl}\n" +
+                            "Error: Could not fetch models. Check URL and API key.")
+                    }
+                }
+            } catch (e: Exception) {
+                SwingUtilities.invokeLater {
+                    refreshDialog.dispose()
+                    setStatus("Auto-refresh error: ${e.message}")
+                    showResultPopup(parentFrame, "Model Refresh Error",
+                        "Provider: ${provider.name}\n" +
+                        "URL: ${provider.baseUrl}\n" +
+                        "Error: ${e.message}")
+                }
+            }
+        }
+    }
+
+    /**
+     * Show a modal result popup with an OK button.
+     */
+    private fun showResultPopup(parent: JFrame?, title: String, message: String) {
+        val dialog = JDialog(parent, title, true).apply {
+            isResizable = false
+            val content = JPanel(BorderLayout(8, 8)).apply {
+                border = JBUI.Borders.empty(16)
+                background = JBColor.PanelBackground
+            }
+            val textArea = JTextArea(message).apply {
+                isEditable = false
+                background = JBColor.PanelBackground
+                font = font.deriveFont(java.awt.Font.PLAIN, 12f)
+                border = JBUI.Borders.empty()
+            }
+            val okBtn = JButton("OK").apply {
+                font = font.deriveFont(java.awt.Font.PLAIN, 12f)
+                addActionListener { dispose() }
+            }
+            val btnPanel = JPanel(FlowLayout(FlowLayout.RIGHT, 0, 0)).apply { isOpaque = false }
+            btnPanel.add(okBtn)
+            content.add(textArea, BorderLayout.CENTER)
+            content.add(btnPanel, BorderLayout.SOUTH)
+            contentPane = content
+            pack()
+            setLocationRelativeTo(parent)
+        }
+        dialog.isVisible = true
     }
 
     // ----------------------------------------------------------------
