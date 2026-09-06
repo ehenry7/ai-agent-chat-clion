@@ -34,7 +34,7 @@ class AiAgentChatConfigurable : Configurable {
                 modelField = textField()
                 modelField!!.align(Align.FILL)
             }
-            row { label("Max Steps:") }
+            row { label("Max Steps (50-1000):") }
             row {
                 maxStepsField = textField()
                 maxStepsField!!.align(Align.FILL)
@@ -71,7 +71,7 @@ class AiAgentChatConfigurable : Configurable {
     override fun apply() {
         settings.state.baseUrl = baseUrlField?.component?.text ?: settings.state.baseUrl
         settings.state.model = modelField?.component?.text ?: settings.state.model
-        settings.state.maxSteps = maxStepsField?.component?.text?.toIntOrNull() ?: settings.state.maxSteps
+        settings.state.maxSteps = maxStepsField?.component?.text?.toIntOrNull()?.coerceIn(50, 1000) ?: settings.state.maxSteps
         settings.state.maxContextTokens = maxContextField?.component?.text?.toIntOrNull() ?: settings.state.maxContextTokens
         settings.state.maxOutputTokens = maxOutputField?.component?.text?.toIntOrNull() ?: settings.state.maxOutputTokens
         val password = apiKeyField?.component?.password

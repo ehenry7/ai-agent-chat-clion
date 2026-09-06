@@ -142,7 +142,7 @@ class ProviderSetupPanel(
         setColumnIdentifiers(arrayOf("Parameter", "Value"))
         addRow(arrayOf("Default Provider", ""))
         addRow(arrayOf("Default Model", ""))
-        addRow(arrayOf("Max Steps", "25"))
+        addRow(arrayOf("Max Steps", "100"))
     }
     private val generalParamsTable = object : JTable(generalParamsTableModel) {
         override fun getCellEditor(row: Int, column: Int): TableCellEditor {
@@ -1150,7 +1150,7 @@ class ProviderSetupPanel(
 
     private fun saveAll() {
         // Save max steps
-        settings.state.maxSteps = maxStepsField.text.trim().toIntOrNull() ?: 25
+        settings.state.maxSteps = maxStepsField.text.trim().toIntOrNull()?.coerceIn(50, 1000) ?: 100
 
         // Save provider enabled states, URL, and key from table
         val providers = settings.getProviders().toMutableList()

@@ -17,7 +17,7 @@ class ChatStateService : PersistentStateComponent<ChatStateService.State> {
     class State {
         var baseUrl: String = "http://techdev.hicomputing.huawei.com:18000"
         var model: String = ""
-        var maxSteps: Int = 25
+        var maxSteps: Int = 100
         var apiKey: String = ""
         var approvalMode: String = ApprovalMode.BALANCED.name
         var maxContextTokens: Int = 32768
