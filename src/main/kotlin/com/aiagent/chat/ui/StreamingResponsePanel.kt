@@ -226,9 +226,8 @@ class StreamingResponsePanel(
                     var content = line
                     content = content.replace(Regex("\\*\\*([^*]+)\\*\\*"), "<b>$1</b>")
                     content = content.replace(Regex("\\*([^*]+)\\*"), "<i>$1</i>")
-                    val codeBg = if (JBColor.isBright()) "#e8e8e8" else "#3c3f41"
-                    val codeFg = if (JBColor.isBright()) "#333333" else "#d4d4d4"
-                    content = content.replace(Regex("`([^`]+)`"), "<code style='background-color: $codeBg; color: $codeFg; padding: 1px 3px; border-radius: 2px; font-family: monospace;'>$1</code>")
+                    val codeColor = if (JBColor.isBright()) "#0066CC" else "#6CB6FF"
+                    content = content.replace(Regex("`([^`]+)`"), "<code style='color: $codeColor; font-family: monospace;'>$1</code>")
                     sb.append("<div style='margin: 2px 0;'>$content</div>")
                 }
             }
