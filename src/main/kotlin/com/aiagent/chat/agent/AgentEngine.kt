@@ -49,6 +49,8 @@ class AgentEngine(
         const val ASSISTANT_COMPRESS_THRESHOLD = 3000
         const val COMPRESSED_ASSISTANT_NOTICE = "[Assistant response with code/explanation, compressed for memory preservation.]"
         const val MAX_COMPACTION_RETRIES = 2
+        /** Max consecutive plan-nudge attempts without progress before giving up. */
+        const val MAX_PLAN_NUDGES = 3
         /** Proactive compaction: trigger when estimated tokens exceed this fraction of max. */
         const val PROACTIVE_COMPACTION_RATIO = 0.80
     }
@@ -145,6 +147,7 @@ class AgentEngine(
         val messages = mutableListOf<ChatMessage>()
         val newMessages = mutableListOf<ChatMessage>()
         var emptyRetries = 0
+        var planNudgeCount = 0
 
         messages.add(ChatMessage(MessageRole.SYSTEM, content = ""))
         messages.addAll(initialHistory)
@@ -214,8 +217,10 @@ class AgentEngine(
             )
 
             val ephemeral = mutableListOf<ChatMessage>()
-            currentPlan?.let {
-                ephemeral.add(ChatMessage(MessageRole.SYSTEM, "Current Plan State:\n$it"))
+            // Use live planManager state (not stale currentPlan) so the LLM sees
+            // the latest step statuses after update_plan calls.
+            planManager.getPlan()?.let {
+                ephemeral.add(ChatMessage(MessageRole.SYSTEM, "Current Plan State:\n${it.toMarkdown()}"))
             }
 
             // --- State: GENERATING ---
@@ -262,6 +267,9 @@ class AgentEngine(
                     onDelta(AgentDelta.Assistant(textContent))
                 }
                 messages.add(assistantResponse)
+
+                // Agent made progress (tool calls) — reset plan nudge counter
+                planNudgeCount = 0
 
                 // --- State: EXECUTING_TOOLS ---
                 stateMachine.transitionTo(AgentSessionState.EXECUTING_TOOLS, "Executing ${calls.size} tool call(s)")
@@ -328,15 +336,28 @@ class AgentEngine(
                 // Check if the plan has incomplete steps — if so, nudge the agent
                 // to continue instead of ending the loop prematurely.
                 if (planManager.hasIncompleteSteps() && step < maxSteps - 1) {
+                    planNudgeCount++
+                    if (planNudgeCount > MAX_PLAN_NUDGES) {
+                        DebugLog.info("AgentEngine", "Max plan nudges ($MAX_PLAN_NUDGES) reached without progress, ending loop")
+                        onDelta(AgentDelta.Status("[plan still incomplete after $MAX_PLAN_NUDGES nudges — stopping]"))
+                        stateMachine.transitionTo(AgentSessionState.COMPLETED, "Max plan nudges reached without progress")
+                        break
+                    }
                     val incomplete = planManager.incompleteStepsSummary()
+                    val phaseHint = if (currentPhase == "discovery") {
+                        "\nYou are currently in the 'discovery' phase with read-only tools. " +
+                        "If you need to make changes, use request_phase_change with target_phase='execution' first."
+                    } else ""
                     val nudge = ChatMessage(MessageRole.USER,
-                        "You indicated you are done, but the plan still has incomplete steps:\n$incomplete\n\n" +
-                        "Please continue working on the remaining steps. Use update_plan to mark steps as in_progress or completed as you work."
+                        "The plan still has incomplete steps:\n$incomplete\n\n" +
+                        "Please continue working on the remaining steps. " +
+                        "Use update_plan to mark steps as 'in_progress' or 'completed' as you work." +
+                        phaseHint
                     )
                     messages.add(nudge)
                     newMessages.add(nudge)
-                    onDelta(AgentDelta.Status("[plan has incomplete steps — continuing]"))
-                    stateMachine.transitionTo(AgentSessionState.GENERATING, "Plan incomplete, nudging agent to continue")
+                    onDelta(AgentDelta.Status("[plan has incomplete steps — nudging ($planNudgeCount/$MAX_PLAN_NUDGES)]"))
+                    stateMachine.transitionTo(AgentSessionState.GENERATING, "Plan incomplete, nudging agent to continue ($planNudgeCount/$MAX_PLAN_NUDGES)")
                     continue
                 }
 
@@ -381,6 +402,7 @@ class AgentEngine(
         val messages = mutableListOf<ChatMessage>()
         val newMessages = mutableListOf<ChatMessage>()
         var emptyRetries = 0
+        var planNudgeCount = 0
 
         messages.add(ChatMessage(MessageRole.SYSTEM, content = ""))
         messages.addAll(initialHistory)
@@ -442,8 +464,10 @@ class AgentEngine(
             )
 
             val ephemeral = mutableListOf<ChatMessage>()
-            currentPlan?.let {
-                ephemeral.add(ChatMessage(MessageRole.SYSTEM, "Current Plan State:\n$it"))
+            // Use live planManager state (not stale currentPlan) so the LLM sees
+            // the latest step statuses after update_plan calls.
+            planManager.getPlan()?.let {
+                ephemeral.add(ChatMessage(MessageRole.SYSTEM, "Current Plan State:\n${it.toMarkdown()}"))
             }
 
             // --- State: GENERATING ---
@@ -484,6 +508,9 @@ class AgentEngine(
                     onDelta(AgentDelta.Assistant(textContent))
                 }
                 messages.add(assistantResponse)
+
+                // Agent made progress (tool calls) — reset plan nudge counter
+                planNudgeCount = 0
 
                 // --- State: EXECUTING_TOOLS ---
                 stateMachine.transitionTo(AgentSessionState.EXECUTING_TOOLS, "Executing ${calls.size} tool call(s)")
@@ -548,15 +575,28 @@ class AgentEngine(
                 // Check if the plan has incomplete steps — if so, nudge the agent
                 // to continue instead of ending the loop prematurely.
                 if (planManager.hasIncompleteSteps() && step < maxSteps - 1) {
+                    planNudgeCount++
+                    if (planNudgeCount > MAX_PLAN_NUDGES) {
+                        DebugLog.info("AgentEngine", "Max plan nudges ($MAX_PLAN_NUDGES) reached without progress, ending loop")
+                        onDelta(AgentDelta.Status("[plan still incomplete after $MAX_PLAN_NUDGES nudges — stopping]"))
+                        stateMachine.transitionTo(AgentSessionState.COMPLETED, "Max plan nudges reached without progress")
+                        break
+                    }
                     val incomplete = planManager.incompleteStepsSummary()
+                    val phaseHint = if (currentPhase == "discovery") {
+                        "\nYou are currently in the 'discovery' phase with read-only tools. " +
+                        "If you need to make changes, use request_phase_change with target_phase='execution' first."
+                    } else ""
                     val nudge = ChatMessage(MessageRole.USER,
-                        "You indicated you are done, but the plan still has incomplete steps:\n$incomplete\n\n" +
-                        "Please continue working on the remaining steps. Use update_plan to mark steps as in_progress or completed as you work."
+                        "The plan still has incomplete steps:\n$incomplete\n\n" +
+                        "Please continue working on the remaining steps. " +
+                        "Use update_plan to mark steps as 'in_progress' or 'completed' as you work." +
+                        phaseHint
                     )
                     messages.add(nudge)
                     newMessages.add(nudge)
-                    onDelta(AgentDelta.Status("[plan has incomplete steps — continuing]"))
-                    stateMachine.transitionTo(AgentSessionState.GENERATING, "Plan incomplete, nudging agent to continue")
+                    onDelta(AgentDelta.Status("[plan has incomplete steps — nudging ($planNudgeCount/$MAX_PLAN_NUDGES)]"))
+                    stateMachine.transitionTo(AgentSessionState.GENERATING, "Plan incomplete, nudging agent to continue ($planNudgeCount/$MAX_PLAN_NUDGES)")
                     continue
                 }
 
