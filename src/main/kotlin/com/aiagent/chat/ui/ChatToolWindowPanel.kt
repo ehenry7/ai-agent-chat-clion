@@ -1553,13 +1553,13 @@ class ThinkingIndicator : JLabel() {
         frameIndex = 0
         startTimeMs = System.currentTimeMillis()
         SwingUtilities.invokeLater {
-            text = mode + " " + frames[0] + " 0s"
+            text = mode + " [0s] " + frames[0]
             timer?.stop()
             timer = javax.swing.Timer(400) {
                 if (!running) return@Timer
                 frameIndex = (frameIndex + 1) % frames.size
                 val elapsedSec = (System.currentTimeMillis() - startTimeMs) / 1000
-                text = mode + " " + frames[frameIndex] + " " + elapsedSec + "s"
+                text = mode + " [" + elapsedSec + "s] " + frames[frameIndex]
             }
             timer?.start()
         }
