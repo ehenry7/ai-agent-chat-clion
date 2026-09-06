@@ -209,8 +209,12 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                         conv.messageContainer.revalidate()
                         conv.messageContainer.repaint()
 
-                        val scrollBar = conv.scrollPane.verticalScrollBar
-                        scrollBar.value = scrollBar.maximum
+                        SwingUtilities.invokeLater {
+                            SwingUtilities.invokeLater {
+                                val scrollBar = conv.scrollPane.verticalScrollBar
+                                scrollBar.value = scrollBar.maximum
+                            }
+                        }
                     }
                 }
 
@@ -249,8 +253,12 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                 conv.messageContainer.add(conv.fillerComponent, conv.fillerGbc)
                 conv.messageContainer.revalidate()
                 conv.messageContainer.repaint()
-                val scrollBar = conv.scrollPane.verticalScrollBar
-                scrollBar.value = scrollBar.maximum
+                SwingUtilities.invokeLater {
+                    SwingUtilities.invokeLater {
+                        val scrollBar = conv.scrollPane.verticalScrollBar
+                        scrollBar.value = scrollBar.maximum
+                    }
+                }
             }
         }
 
@@ -280,6 +288,11 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
         // Model selection from More dropdown — trigger the model tree popup
         conversationTabPanel.onSelectModel = {
             enhancedInputPanel.triggerModelTreePopup()
+        }
+
+        // Disable current model from More dropdown — switch to another enabled model
+        conversationTabPanel.onDisableModel = {
+            disableCurrentModel()
         }
 
         // Sessions View from More dropdown — go to landing/welcome screen
@@ -543,6 +556,87 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
         }
     }
 
+    /**
+     * Disable the current model in the settings and switch to another enabled model
+     * from the same provider. If all models from that provider are disabled, fall back
+     * to the default model from any enabled provider.
+     */
+    private fun disableCurrentModel() {
+        val currentModelId = settings.state.model
+        val providers = settings.getProviders()
+
+        // Find the provider that owns the current model
+        val currentProvider = providers.find { p -> p.models.any { it.id == currentModelId } }
+        if (currentProvider == null) {
+            statusLabel.text = "Cannot find provider for model '$currentModelId'"
+            return
+        }
+
+        // Disable the current model in the provider's model list
+        val updatedModels = currentProvider.models.map { m ->
+            if (m.id == currentModelId) m.copy(enabled = false) else m
+        }
+        val updatedProvider = currentProvider.copy(models = updatedModels)
+
+        // Save the updated provider
+        settings.addProvider(updatedProvider)
+
+        // Find a replacement: first enabled model from the same provider
+        val replacement = updatedModels.find { it.enabled }
+
+        if (replacement != null) {
+            // Switch to another model from the same provider
+            settings.state.model = replacement.id
+            conversationTabPanel.updateModelStatus(replacement.displayName)
+            statusLabel.text = "Disabled '$currentModelId', switched to '${replacement.id}'"
+            DebugLog.info("ChatToolWindow", "Disabled model '$currentModelId', switched to '${replacement.id}' (same provider)")
+        } else {
+            // All models from this provider are disabled — find the default model from any enabled provider
+            val fallbackProvider = providers
+                .filter { it.enabled && it.id != currentProvider.id }
+                .find { p -> p.models.any { it.enabled } }
+            val fallbackModel = fallbackProvider?.models?.find { it.enabled }
+
+            if (fallbackModel != null) {
+                settings.state.model = fallbackModel.id
+                settings.state.baseUrl = fallbackProvider.baseUrl
+                if (fallbackProvider.apiKey.isNotBlank()) {
+                    settings.setApiKey(fallbackProvider.apiKey)
+                }
+                conversationTabPanel.updateModelStatus(fallbackModel.displayName)
+                statusLabel.text = "Disabled '$currentModelId', switched to default '${fallbackModel.id}'"
+                DebugLog.info("ChatToolWindow", "Disabled model '$currentModelId', switched to default '${fallbackModel.id}' (fallback provider)")
+            } else {
+                // No enabled models anywhere — keep the current model but warn
+                // Re-enable the model we just disabled since there's no alternative
+                val reEnabledModels = currentProvider.models.map { m ->
+                    if (m.id == currentModelId) m.copy(enabled = true) else m
+                }
+                settings.addProvider(currentProvider.copy(models = reEnabledModels))
+                statusLabel.text = "Cannot disable '$currentModelId' — no other enabled models available"
+                DebugLog.warn("ChatToolWindow", "Cannot disable model '$currentModelId' — no alternative enabled models found")
+            }
+        }
+
+        // Update the model tree in the input panel
+        val treeEntries = settings.getProviders()
+            .filter { it.enabled }
+            .flatMap { p ->
+                p.models.filter { it.enabled }.map { m ->
+                    EnhancedInputPanel.ModelTreeEntry(
+                        providerName = p.name,
+                        providerId = p.id,
+                        modelName = m.name.ifBlank { m.id },
+                        modelId = "${p.name}/${m.name.ifBlank { m.id }}",
+                        rawModelId = m.id,
+                        latencyMs = m.latencyMs,
+                        measured = m.measured
+                    )
+                }
+            }
+        enhancedInputPanel.updateModelTree(treeEntries)
+    }
+
     private fun showMenuPopup(source: java.awt.Component) {
         val popup = JPopupMenu()
 
@@ -783,7 +877,11 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                     // New user message: collapse any pending tool calls in the previous assistant bubble
                     activeAssistantPanel?.collapseToolCalls()
                     activeAssistantPanel = null
-                    UserMessagePanel(text, referencedFiles)
+                    // Capture the UI log index for branching
+                    val uiLogIndex = activeConv.uiLog.size - 1
+                    UserMessagePanel(text, referencedFiles, onEdit = {
+                        branchFromPrompt(text, referencedFiles, activeConv, uiLogIndex)
+                    })
                 }
                 role == "error" -> {
                     activeAssistantPanel?.collapseToolCalls()
@@ -827,9 +925,16 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
             activeConv.messageContainer.revalidate()
             activeConv.messageContainer.repaint()
 
+            // Scroll to bottom after the new component is laid out.
+            // Use invokeLater twice: first to let revalidate process, second
+            // to scroll after the scroll pane's internal layout updates the
+            // maximum scroll value. This ensures the full content of the
+            // newly added bubble (including its bottom) is visible.
             SwingUtilities.invokeLater {
-                val scrollBar = activeConv.scrollPane.verticalScrollBar
-                scrollBar.value = scrollBar.maximum
+                SwingUtilities.invokeLater {
+                    val scrollBar = activeConv.scrollPane.verticalScrollBar
+                    scrollBar.value = scrollBar.maximum
+                }
             }
         }
     }
@@ -862,8 +967,10 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
         activeConv.messageContainer.repaint()
 
         SwingUtilities.invokeLater {
-            val scrollBar = activeConv.scrollPane.verticalScrollBar
-            scrollBar.value = scrollBar.maximum
+            SwingUtilities.invokeLater {
+                val scrollBar = activeConv.scrollPane.verticalScrollBar
+                scrollBar.value = scrollBar.maximum
+            }
         }
     }
 
@@ -965,6 +1072,79 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
             enhancedInputPanel.updateRunningState(false)
             usageCounterPanel.updateUsage(usageTracker.computeSummary(emptyList()))
         }
+    }
+
+    /**
+     * Branch from a previous user prompt: creates a new conversation tab,
+     * copies the history up to (but not including) the edited prompt,
+     * and pre-fills the input area with the original prompt text for editing.
+     *
+     * Issue #7: Edit a previous prompt by adding an edit button (pencil)
+     * and branching from that prompt with a new prompt.
+     */
+    private fun branchFromPrompt(
+        originalText: String,
+        referencedFiles: List<String>,
+        sourceConv: ConversationTabPanel.Conversation,
+        uiLogIndex: Int
+    ) {
+        if (activeEngineJob?.isActive == true) {
+            statusLabel.text = "Cannot branch while agent is running"
+            return
+        }
+
+        // Create a new conversation tab for the branch
+        val tabCount = conversationTabPanel.getAllConversations().size
+        val newTabId = conversationTabPanel.newConversation("Branch of ${sourceConv.title}")
+
+        val newConv = conversationTabPanel.getConversation(newTabId)
+        if (newConv != null) {
+            // Copy history up to the edited prompt (exclusive — the user will re-submit an edited version)
+            // The UI log entries before the edited prompt are replayed as bubbles
+            val uiLogToReplay = if (uiLogIndex >= 0 && uiLogIndex < sourceConv.uiLog.size) {
+                sourceConv.uiLog.subList(0, uiLogIndex)
+            } else {
+                sourceConv.uiLog.toList()
+            }
+
+            // Copy the corresponding chat history (messages before the edited prompt)
+            // We count user messages in the UI log to find the split point in history
+            var userMsgCount = 0
+            for (entry in uiLogToReplay) {
+                if (entry.role.contains("user")) userMsgCount++
+            }
+            // Find the split point in history: keep messages up to the userMsgCount-th user message (exclusive)
+            var historySplitIdx = 0
+            var userMsgSeen = 0
+            for ((idx, msg) in sourceConv.history.withIndex()) {
+                if (msg.role == MessageRole.USER) {
+                    userMsgSeen++
+                    if (userMsgSeen >= userMsgCount) {
+                        historySplitIdx = idx
+                        break
+                    }
+                }
+                historySplitIdx = idx + 1
+            }
+            val historyToCopy = sourceConv.history.subList(0, historySplitIdx.coerceAtMost(sourceConv.history.size))
+            newConv.history.addAll(historyToCopy)
+
+            // Replay UI log entries as bubbles in the new tab
+            for (entry in uiLogToReplay) {
+                addMessageBubbleToActiveTab(entry.role, entry.text, recordUiLog = false)
+            }
+        }
+
+        // Pre-fill the input area with the original prompt text for editing
+        enhancedInputPanel.setText(originalText)
+
+        // Switch to the new tab
+        conversationTabPanel.switchTo(newTabId)
+        cardLayout.show(this, CHAT_CARD)
+        enhancedInputPanel.requestFocus()
+
+        statusLabel.text = "Branched from '${sourceConv.title}' — edit and send your prompt"
+        DebugLog.info("ChatToolWindow", "Branched from prompt (uiLogIndex=$uiLogIndex) into new tab $newTabId")
     }
 
     /**
@@ -1220,8 +1400,11 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                             DebugLog.info("ChatToolWindow", "State: ${delta.from} -> ${delta.to} (${delta.reason})")
                             SwingUtilities.invokeLater {
                                 statusLabel.text = "${delta.to.name.lowercase().replaceFirstChar { it.uppercase() }}: ${delta.reason}"
-                                // Stop thinking animation when leaving GENERATING state
-                                if (delta.to != AgentSessionState.GENERATING) {
+                                // Start thinking animation when entering GENERATING state (e.g. after tools complete)
+                                // Stop it when leaving GENERATING state
+                                if (delta.to == AgentSessionState.GENERATING) {
+                                    thinkingIndicator.start()
+                                } else {
                                     thinkingIndicator.stop()
                                 }
                             }

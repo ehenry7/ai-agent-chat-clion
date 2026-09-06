@@ -54,7 +54,7 @@ object HtmlPaneFactory {
                     runChars += semi + 1 - i
                     val moreAhead = semi + 1 < text.length && !text[semi + 1].isWhitespace()
                     if (runChars >= every && moreAhead) {
-                        sb.append("<wbr>")
+                        sb.append('\u200B')
                         runChars = 0
                     }
                     i = semi + 1
@@ -70,10 +70,10 @@ object HtmlPaneFactory {
                     sb.append(ch)
                     runChars++
                     // Only place a break when the run continues with more
-                    // non-space content, so no stray trailing <wbr> is emitted.
+                    // non-space content, so no stray trailing break is emitted.
                     val moreAhead = i + 1 < text.length && !text[i + 1].isWhitespace()
                     if (runChars >= every && moreAhead) {
-                        sb.append("<wbr>")
+                        sb.append('\u200B')
                         runChars = 0
                     }
                 }
@@ -97,12 +97,9 @@ object HtmlPaneFactory {
             background = bgColor
             fgColor?.let { foreground = it }
             putClientProperty(JTextPane.HONOR_DISPLAY_PROPERTIES, true)
-            val colorStyle = if (fgColor != null) {
-                "color: #%06X; ".format(fgColor.rgb and 0xFFFFFF)
-            } else {
-                ""
-            }
-            text = "<html><body style='font-family: sans-serif; font-size: 12px; $colorStyle word-wrap: break-word;'>" +
+            // Don't bake color into HTML body style — HONOR_DISPLAY_PROPERTIES will
+            // use the component's foreground (a JBColor) which updates on theme change.
+            text = "<html><body style='font-family: sans-serif; font-size: 12px; word-wrap: break-word;'>" +
                     htmlBody + "</body></html>"
             this.border = border
             com.aiagent.chat.debug.DebugLog.info(

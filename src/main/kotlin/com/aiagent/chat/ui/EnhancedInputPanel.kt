@@ -202,13 +202,18 @@ class EnhancedInputPanel(
                         }
                         KeyEvent.VK_ENTER -> {
                             e.consume()
-                            // Let the popup handle the selection
+                            // Close popup and execute the command directly
+                            slashPopup?.cancel()
+                            slashPopup = null
+                            handleSubmit()
                             return
                         }
                         KeyEvent.VK_UP, KeyEvent.VK_DOWN -> {
                             // Let the popup handle arrow navigation
                             return
                         }
+                        // Backspace: let it propagate to the text area naturally
+                        // so chars are removed; keyReleased will update/close the popup
                     }
                 }
 

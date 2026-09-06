@@ -67,17 +67,7 @@ class ResponseMessagePanel(
         SwingUtilities.invokeLater {
             allMessageText.append("\n\n").append(text)
 
-            // Add a visual bullet separator before the new content
-            val separatorHtml = "<html><body style='margin: 6px 0; color: #999999; font-size: 11px;'>" +
-                    "• • •" +
-                    "</body></html>"
-            val separatorPane = HtmlPaneFactory.createHtmlPane(
-                htmlBody = separatorHtml,
-                bgColor = background,
-                fgColor = JBColor(0x999999, 0x666666)
-            )
-            separatorPane.alignmentX = JPanel.LEFT_ALIGNMENT
-            bodyWrapper?.add(separatorPane)
+            // No visual separator between consecutive assistant messages — just append content directly
 
             // Add the new message content
             if (project != null) {
