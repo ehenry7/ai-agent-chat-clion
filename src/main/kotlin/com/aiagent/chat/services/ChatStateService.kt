@@ -2,6 +2,7 @@ package com.aiagent.chat.services
 
 import com.aiagent.chat.model.ApprovalMode
 import com.aiagent.chat.model.AuthHeaderType
+import com.aiagent.chat.model.ModelTierConfiguration
 import com.aiagent.chat.model.ProviderConfig
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.*
@@ -33,6 +34,12 @@ class ChatStateService : PersistentStateComponent<ChatStateService.State> {
         var defaultProviderId: String = ""
         /** Full display name of the default model (ProviderName/ModelName). */
         var defaultModelDisplayName: String = ""
+
+        // --- Multi-tier model configuration ---
+        /** JSON-serialized ModelTierConfiguration for cognitive tier model assignment. */
+        var modelTierConfigJson: String = ""
+        /** Whether multi-tier model configuration is enabled. */
+        var modelTierEnabled: Boolean = false
     }
 
     private var myState = State()
@@ -102,4 +109,35 @@ class ChatStateService : PersistentStateComponent<ChatStateService.State> {
 
     fun isDynamicRoutingEnabled(): Boolean = myState.dynamicRoutingEnabled
     fun setDynamicRoutingEnabled(enabled: Boolean) { myState.dynamicRoutingEnabled = enabled }
+
+    // --- Multi-tier model configuration accessors ---
+
+    /**
+     * Get the model tier configuration.
+     * Returns a default configuration if not set or parsing fails.
+     */
+    fun getModelTierConfig(): ModelTierConfiguration {
+        if (myState.modelTierConfigJson.isBlank()) return ModelTierConfiguration()
+        return try {
+            kotlinx.serialization.json.Json.decodeFromString(
+                ModelTierConfiguration.serializer(),
+                myState.modelTierConfigJson
+            )
+        } catch (e: Exception) {
+            ModelTierConfiguration()
+        }
+    }
+
+    /**
+     * Save the model tier configuration as JSON string.
+     */
+    fun setModelTierConfig(config: ModelTierConfiguration) {
+        myState.modelTierConfigJson = kotlinx.serialization.json.Json.encodeToString(
+            ModelTierConfiguration.serializer(),
+            config
+        )
+    }
+
+    fun isModelTierEnabled(): Boolean = myState.modelTierEnabled
+    fun setModelTierEnabled(enabled: Boolean) { myState.modelTierEnabled = enabled }
 }

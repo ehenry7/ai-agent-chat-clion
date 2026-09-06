@@ -4,8 +4,11 @@ import com.aiagent.chat.model.AuthHeaderType
 import com.aiagent.chat.model.ModelCost
 import com.aiagent.chat.model.ModelInfo
 import com.aiagent.chat.model.ModelSize
+import com.aiagent.chat.model.ModelTier
+import com.aiagent.chat.model.ModelTierConfiguration
 import com.aiagent.chat.model.ProviderConfig
 import com.aiagent.chat.model.ProviderManager
+import com.aiagent.chat.model.TierModelConfig
 import com.aiagent.chat.services.ChatStateService
 import com.intellij.icons.AllIcons
 import com.intellij.ui.JBColor
@@ -116,6 +119,13 @@ class ProviderSetupPanel(
     // --- Agent params ---
     private val maxStepsField = JBTextField()
 
+    // --- Multi-tier model configuration ---
+    private val tierEnabledCheckbox = JCheckBox("Enable multi-tier model configuration")
+    private val fastModelCombo = JComboBox<String>()
+    private val coderModelCombo = JComboBox<String>()
+    private val architectModelCombo = JComboBox<String>()
+    private val defaultModelComboTier = JComboBox<String>()
+
     // --- Status label for test/measure feedback ---
     private val statusLabel = JBLabel(" ").apply {
         font = font.deriveFont(java.awt.Font.PLAIN, 11f)
@@ -189,6 +199,8 @@ class ProviderSetupPanel(
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
         }
         scrollContent.add(buildGeneralParamsSection())
+        scrollContent.add(Box.createVerticalStrut(4))
+        scrollContent.add(buildModelTierSection())
         scrollContent.add(Box.createVerticalStrut(4))
         scrollContent.add(buildProviderSection())
         scrollContent.add(Box.createVerticalStrut(4))
@@ -299,6 +311,119 @@ class ProviderSetupPanel(
         }
 
         return outer
+    }
+
+    /**
+     * Model Tier Configuration section.
+     *
+     * Allows the user to assign specific models to cognitive tiers:
+     * - fast: Lightweight / Utility Tier
+     * - coder: Core Workhorse Tier
+     * - architect: Frontier / Reasoning Tier
+     * - default: Orchestration Target
+     *
+     * Each tier has a combo box populated with all available models (ProviderName/ModelName),
+     * a description label, and an enable checkbox for the whole section.
+     */
+    private fun buildModelTierSection(): JComponent {
+        val outer = JPanel(BorderLayout(0, 4)).apply { isOpaque = false }
+        outer.border = JBUI.Borders.compound(
+            JBUI.Borders.customLine(JBColor.border(), 1),
+            JBUI.Borders.empty(6)
+        )
+
+        // Title
+        outer.add(JBLabel("AI Agent Model Tier Configuration").apply {
+            font = font.deriveFont(java.awt.Font.BOLD, 13f)
+        }, BorderLayout.NORTH)
+
+        // Enable checkbox
+        tierEnabledCheckbox.isOpaque = false
+        tierEnabledCheckbox.font = tierEnabledCheckbox.font.deriveFont(java.awt.Font.PLAIN, 12f)
+        tierEnabledCheckbox.toolTipText = "When enabled, the agent uses different models for different cognitive tasks based on tier assignment"
+
+        // Build tier rows
+        val tierPanel = JPanel(GridBagLayout()).apply { isOpaque = false }
+        val gbc = GridBagConstraints().apply {
+            fill = GridBagConstraints.HORIZONTAL
+            insets = JBUI.insets(2, 4, 2, 4)
+        }
+
+        // Enable checkbox row
+        gbc.gridx = 0; gbc.gridy = 0; gbc.gridwidth = 3; gbc.weightx = 1.0
+        tierPanel.add(tierEnabledCheckbox, gbc)
+        gbc.gridwidth = 1
+
+        // Tier rows
+        val tiers = listOf(
+            Triple(ModelTier.FAST, fastModelCombo, "Sub-agent triage, tool validation, slash commands"),
+            Triple(ModelTier.CODER, coderModelCombo, "Primary execution loop, code generation, refactoring"),
+            Triple(ModelTier.ARCHITECT, architectModelCombo, "Architecture planning, deep reasoning, code reviews"),
+            Triple(ModelTier.DEFAULT, defaultModelComboTier, "Fallback for ad-hoc prompts and dynamic routing")
+        )
+
+        tiers.forEachIndexed { index, (tier, combo, description) ->
+            val row = index + 1
+
+            // Tier name label (bold)
+            gbc.gridx = 0; gbc.gridy = row; gbc.weightx = 0.0
+            gbc.insets = JBUI.insets(2, 4, 2, 8)
+            tierPanel.add(JBLabel(tier.name).apply {
+                font = font.deriveFont(java.awt.Font.BOLD, 12f)
+                toolTipText = ModelTier.fullDescription(tier)
+            }, gbc)
+
+            // Model combo box
+            gbc.gridx = 1; gbc.gridy = row; gbc.weightx = 1.0
+            gbc.insets = JBUI.insets(2, 4, 2, 4)
+            combo.isEditable = false
+            combo.toolTipText = ModelTier.fullDescription(tier)
+            tierPanel.add(combo, gbc)
+
+            // Description label
+            gbc.gridx = 2; gbc.gridy = row; gbc.weightx = 0.7
+            gbc.insets = JBUI.insets(2, 8, 2, 4)
+            tierPanel.add(JBLabel(description).apply {
+                font = font.deriveFont(java.awt.Font.PLAIN, 11f)
+                foreground = JBColor(0x666666, 0x999999)
+            }, gbc)
+        }
+
+        outer.add(tierPanel, BorderLayout.CENTER)
+
+        // Load saved state
+        tierEnabledCheckbox.isSelected = settings.isModelTierEnabled()
+        refreshTierCombos()
+
+        return outer
+    }
+
+    /**
+     * Populate tier combo boxes with all available models from all enabled providers.
+     * Also restores saved selections from settings.
+     */
+    private fun refreshTierCombos() {
+        val allModels = settings.getProviders()
+            .filter { it.enabled }
+            .flatMap { p -> p.models.filter { it.enabled }.map { "${p.name}/${it.name}" } }
+
+        val combos = listOf(fastModelCombo, coderModelCombo, architectModelCombo, defaultModelComboTier)
+        val tierConfig = settings.getModelTierConfig()
+        val tiers = listOf(ModelTier.FAST, ModelTier.CODER, ModelTier.ARCHITECT, ModelTier.DEFAULT)
+
+        for ((combo, tier) in combos.zip(tiers)) {
+            combo.removeAllItems()
+            combo.addItem("") // empty = not configured
+            allModels.forEach { combo.addItem(it) }
+
+            // Restore saved selection
+            val saved = tierConfig.getTier(tier).modelDisplayName
+            if (saved.isNotBlank() && allModels.contains(saved)) {
+                combo.selectedItem = saved
+            } else {
+                combo.selectedItem = ""
+            }
+        }
     }
 
     private fun buildProviderSection(): JComponent {
@@ -425,6 +550,7 @@ class ProviderSetupPanel(
         providerTable.columnModel.getColumn(0).cellEditor = CheckboxEditor()
         resizeTableScroll(providerTableScroll, providerTable)
         refreshDefaultCombos()
+        refreshTierCombos()
     }
 
     private fun refreshModelTable(provider: ProviderConfig) {
@@ -1113,6 +1239,16 @@ class ProviderSetupPanel(
             }
         }
 
+        // Save multi-tier model configuration
+        settings.setModelTierEnabled(tierEnabledCheckbox.isSelected)
+        val tierConfigs = listOf(
+            TierModelConfig(ModelTier.FAST, (fastModelCombo.selectedItem as? String ?: "").trim()),
+            TierModelConfig(ModelTier.CODER, (coderModelCombo.selectedItem as? String ?: "").trim()),
+            TierModelConfig(ModelTier.ARCHITECT, (architectModelCombo.selectedItem as? String ?: "").trim()),
+            TierModelConfig(ModelTier.DEFAULT, (defaultModelComboTier.selectedItem as? String ?: "").trim())
+        )
+        settings.setModelTierConfig(ModelTierConfiguration(tiers = tierConfigs))
+
         onSave()
     }
 
@@ -1185,6 +1321,7 @@ class ProviderSetupPanel(
         modelSectionLabel.text = "Models of: ${provider.name}"
         refreshModelTable(provider)
         refreshDefaultCombos()
+        refreshTierCombos()
     }
 
     /**

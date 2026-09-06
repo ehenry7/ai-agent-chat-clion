@@ -39,7 +39,8 @@ class AgentEngine(
     private val commandQueue: CommandQueue = CommandQueue(),
     private val contextCompactor: ContextCompactor? = null,
     val planManager: PlanManager = PlanManager(),
-    val providerManager: ProviderManager? = null
+    val providerManager: ProviderManager? = null,
+    val modelTierManager: ModelTierManager? = null
 ) {
     companion object {
         const val RECENT_WINDOW_MESSAGES = 8
@@ -57,6 +58,36 @@ class AgentEngine(
     /** Expose state machine for external queries (e.g. UI status display). */
     val state: AgentSessionState get() = stateMachine.state
     val queue: CommandQueue get() = commandQueue
+
+    /**
+     * Select the appropriate ApiClient for the current agent context.
+     *
+     * When multi-tier model configuration is active:
+     * - During "discovery" phase: prefer the architect tier (deep reasoning, codebase analysis)
+     * - During "execution" phase: prefer the coder tier (primary execution loop)
+     * - For steering/triage: prefer the fast tier (lightweight utility)
+     *
+     * Falls back to the default constructor client if tier manager is inactive
+     * or the requested tier client is unavailable.
+     */
+    private fun selectClient(phase: String, isSteering: Boolean = false): ApiClient {
+        val tierMgr = modelTierManager
+        if (tierMgr == null || !tierMgr.isActive()) return client
+
+        // For steering messages, use fast tier if available
+        if (isSteering) {
+            tierMgr.getFastClient()?.let { return it }
+        }
+
+        // Select tier based on phase
+        val tierClient = when (phase) {
+            "discovery" -> tierMgr.getArchitectClient()
+            "execution" -> tierMgr.getCoderClient()
+            else -> tierMgr.getDefaultClient()
+        }
+
+        return tierClient ?: client
+    }
 
     init {
         // Wire state machine transitions to AgentDelta emissions
@@ -191,9 +222,11 @@ class AgentEngine(
             stateMachine.transitionTo(AgentSessionState.GENERATING, "Step ${step + 1}: requesting LLM response")
 
             // Use non-streaming mode (more reliable) with context compaction support
-            DebugLog.info("AgentEngine", "Sending non-streaming request to API (messages=${messages.size}, tools=${activeTools.size})")
+            // Select tier-aware client based on current phase
+            val tierClient = selectClient(currentPhase)
+            DebugLog.info("AgentEngine", "Sending non-streaming request to API (messages=${messages.size}, tools=${activeTools.size}, model=${tierClient.model})")
             val assistantResponse = try {
-                callWithCompaction(messages, activeTools, ephemeral)
+                callWithCompaction(messages, activeTools, ephemeral, tierClient)
             } catch (e: CancellationException) {
                 DebugLog.info("AgentEngine", "API call cancelled (likely abort)")
                 stateMachine.transitionTo(AgentSessionState.COMPLETED, "Cancelled")
@@ -416,8 +449,10 @@ class AgentEngine(
             // --- State: GENERATING ---
             stateMachine.transitionTo(AgentSessionState.GENERATING, "Step ${step + 1}: requesting LLM response")
 
+            // Select tier-aware client based on current phase
+            val tierClient = selectClient(currentPhase)
             val assistantResponse = try {
-                callWithCompaction(messages, activeTools, ephemeral)
+                callWithCompaction(messages, activeTools, ephemeral, tierClient)
             } catch (e: CancellationException) {
                 stateMachine.transitionTo(AgentSessionState.COMPLETED, "Cancelled")
                 throw e
@@ -565,8 +600,10 @@ class AgentEngine(
     private suspend fun callWithCompaction(
         messages: MutableList<ChatMessage>,
         tools: List<ToolDefinition>,
-        ephemeral: List<ChatMessage>
+        ephemeral: List<ChatMessage>,
+        apiClient: ApiClient? = null
     ): ChatMessage {
+        val activeClient = apiClient ?: client
         var compactionAttempts = 0
         while (true) {
             // --- Proactive compaction: check token estimate before API call ---
@@ -591,7 +628,7 @@ class AgentEngine(
             val messagesForApi = compressed + ephemeral
             DebugLog.info("AgentEngine", "Sending ${messagesForApi.size} messages to API, ${tools.size} tools (compaction attempts: $compactionAttempts)")
             try {
-                val response = client.chat(messagesForApi, tools)
+                val response = activeClient.chat(messagesForApi, tools)
                 // Emit usage update if the response contains usage data
                 response.usage?.let { onDelta(AgentDelta.UsageUpdate(it)) }
                 return response
@@ -651,6 +688,7 @@ class AgentEngine(
                 (if (globalMem.isNotBlank()) "\n<agent_global_memory>\n$globalMem\n</agent_global_memory>" else "") +
                 (if (memory.isNotBlank()) "\n<agent_memory>\n$memory\n</agent_memory>" else "") +
                 planManager.toSystemPromptSection() +
-                (providerManager?.toSystemPromptSection() ?: "")
+                (providerManager?.toSystemPromptSection() ?: "") +
+                (modelTierManager?.takeIf { it.isActive() }?.toSystemPromptSection() ?: "")
     }
 }
