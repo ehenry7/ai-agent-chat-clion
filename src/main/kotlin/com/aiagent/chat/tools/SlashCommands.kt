@@ -2,6 +2,7 @@ package com.aiagent.chat.tools
 
 import com.aiagent.chat.model.ProviderConfig
 import com.aiagent.chat.util.IdeaLogReader
+import com.intellij.openapi.vfs.LocalFileSystem
 import java.io.File
 
 /**
@@ -283,6 +284,8 @@ object SlashCommands {
         // Write the file
         return try {
             agentsFile.writeText(sb.toString())
+            // Refresh IntelliJ VFS so the new file appears in the project tree
+            LocalFileSystem.getInstance().refreshAndFindFileByIoFile(agentsFile)
             "Created `AGENTS.md` at project root.\n\nAnalyzed ${topDirs.size} directories, ${sortedLangs.size} file types. Review and customize as needed."
         } catch (e: Exception) {
             "Error writing AGENTS.md: ${e.message}"

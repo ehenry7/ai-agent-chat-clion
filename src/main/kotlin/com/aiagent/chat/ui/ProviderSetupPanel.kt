@@ -65,7 +65,21 @@ class ProviderSetupPanel(
 
     // --- Model table ---
     private val modelTableModel = DefaultTableModel(0, 7)
-    private val modelTable = JTable(modelTableModel).apply {
+    private val modelTable = object : JTable(modelTableModel) {
+        override fun getToolTipText(e: java.awt.event.MouseEvent): String? {
+            val row = rowAtPoint(e.point)
+            if (row < 0) return null
+            val modelRow = convertRowIndexToModel(row)
+            val modelId = modelTableModel.getValueAt(modelRow, 2)?.toString() ?: return null
+            val provider = settings.getProviders().find { p -> p.models.any { it.id == modelId } }
+            val model = provider?.models?.find { it.id == modelId }
+            return if (model != null && model.measured && model.latencyMs > 0) {
+                "Measured latency: " + model.latencyMs + "ms"
+            } else {
+                "Not measured"
+            }
+        }
+    }.apply {
         columnModel.getColumn(0).headerValue = ""
         columnModel.getColumn(0).preferredWidth = 30
         columnModel.getColumn(0).maxWidth = 30
