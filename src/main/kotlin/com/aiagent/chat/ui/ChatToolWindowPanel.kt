@@ -97,6 +97,7 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
     )
 
     private val statusLabel = JBLabel("Ready")
+    private val thinkingIndicator = ThinkingIndicator()
 
     // --- Provider-only setup panel v2 ---
     private val providerSetupPanel = ProviderSetupPanel(
@@ -686,7 +687,12 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                 JBUI.Borders.customLine(ThemeUtils.SUBTLE_BORDER, 0, 0, 1, 0),
                 JBUI.Borders.empty(2, 8)
             )
-            add(statusLabel, BorderLayout.WEST)
+            val leftPanel = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0)).apply {
+                isOpaque = false
+                add(statusLabel)
+                add(thinkingIndicator)
+            }
+            add(leftPanel, BorderLayout.WEST)
             add(usageCounterPanel, BorderLayout.EAST)
         }
         container.add(statusBar, BorderLayout.NORTH)
@@ -947,6 +953,7 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
         usageTracker.reset()
         SwingUtilities.invokeLater {
             statusLabel.text = "Stopped"
+            thinkingIndicator.stop()
             enhancedInputPanel.updateRunningState(false)
             usageCounterPanel.updateUsage(usageTracker.computeSummary(emptyList()))
         }
@@ -1135,9 +1142,16 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                 onDelta = { delta ->
                     when (delta) {
                         is AgentDelta.Status -> {
-                            SwingUtilities.invokeLater { statusLabel.text = delta.text }
+                            SwingUtilities.invokeLater {
+                                statusLabel.text = delta.text
+                                // Start thinking animation when a step status is shown
+                                if (delta.text.startsWith("[step")) {
+                                    thinkingIndicator.start()
+                                }
+                            }
                         }
                         is AgentDelta.Assistant -> {
+                            SwingUtilities.invokeLater { thinkingIndicator.stop() }
                             activeStreamingPanel?.let { panel ->
                                 SwingUtilities.invokeLater {
                                     val parent = panel.parent
@@ -1152,6 +1166,7 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                             addMessageBubbleToActiveTab("assistant", delta.text)
                         }
                         is AgentDelta.ToolOutput -> {
+                            SwingUtilities.invokeLater { thinkingIndicator.stop() }
                             activeStreamingPanel?.let { panel ->
                                 val finalized = panel.finalize()
                                 activeStreamingPanel = null
@@ -1163,7 +1178,9 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                             }
                             addMessageBubbleToActiveTab("tool: ${delta.name}", delta.text)
                         }
-                        is AgentDelta.StreamingStart -> { }
+                        is AgentDelta.StreamingStart -> {
+                            SwingUtilities.invokeLater { thinkingIndicator.stop() }
+                        }
                         is AgentDelta.StreamingContent -> {
                             activeStreamingPanel?.appendText(delta.text)
                         }
@@ -1195,6 +1212,10 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                             DebugLog.info("ChatToolWindow", "State: ${delta.from} -> ${delta.to} (${delta.reason})")
                             SwingUtilities.invokeLater {
                                 statusLabel.text = "${delta.to.name.lowercase().replaceFirstChar { it.uppercase() }}: ${delta.reason}"
+                                // Stop thinking animation when leaving GENERATING state
+                                if (delta.to != AgentSessionState.GENERATING) {
+                                    thinkingIndicator.stop()
+                                }
                             }
                         }
                         is AgentDelta.QueueUpdate -> {
@@ -1288,10 +1309,56 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                 commandQueue.clear()
                 SwingUtilities.invokeLater {
                     statusLabel.text = "Ready"
+                    thinkingIndicator.stop()
                     enhancedInputPanel.updateRunningState(false)
                 }
                 DebugLog.info("AgentEngine", "Prompt execution finished and UI reset")
             }
+        }
+    }
+}
+
+/**
+ * Animated "thinking" indicator that shows cycling dots next to the status label
+ * while waiting for a model response.
+ */
+class ThinkingIndicator : JLabel() {
+    private val frames = arrayOf(".", "..", "...")
+    private var frameIndex = 0
+    @Volatile
+    private var running = false
+    private var timer: javax.swing.Timer? = null
+
+    init {
+        font = font.deriveFont(java.awt.Font.BOLD, 13f)
+        foreground = JBColor(0x4A9EFF, 0x6BB6FF)
+        isOpaque = false
+        text = ""
+        preferredSize = Dimension(30, 16)
+    }
+
+    fun start() {
+        if (running) return
+        running = true
+        frameIndex = 0
+        SwingUtilities.invokeLater {
+            text = frames[0]
+            timer?.stop()
+            timer = javax.swing.Timer(400) {
+                if (!running) return@Timer
+                frameIndex = (frameIndex + 1) % frames.size
+                text = frames[frameIndex]
+            }
+            timer?.start()
+        }
+    }
+
+    fun stop() {
+        running = false
+        SwingUtilities.invokeLater {
+            timer?.stop()
+            timer = null
+            text = ""
         }
     }
 }
