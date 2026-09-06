@@ -34,10 +34,10 @@ class ToolApprovalPanel(
 
     init {
         border = JBUI.Borders.compound(
-            JBUI.Borders.customLine(JBColor(0xFF9800, 0xCC8800), 1),
+            JBUI.Borders.customLine(ThemeUtils.WARNING, 1),
             JBUI.Borders.empty(8, 12)
         )
-        background = JBColor(0xFFF8E1, 0x3A3320)
+        background = JBColor.namedColor("Notification.warningBackground", JBColor(0xFFF8E1, 0x3A3320))
 
         buildHeader()
         buildPreview()

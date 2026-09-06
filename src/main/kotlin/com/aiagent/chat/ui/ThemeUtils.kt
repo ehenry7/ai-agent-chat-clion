@@ -129,30 +129,139 @@ object ThemeUtils {
         }
     }
 
+    // --- Editor scheme color helpers (resolved lazily from EditorColorsManager) ---
+    // These read from the active editor color scheme, so they reflect the user's
+    // chosen syntax-highlighting theme (Darcula, custom, etc.).
+
     /**
-     * Get the keyword color from the editor scheme (for syntax highlighting references).
+     * Get the global editor scheme's default background.
      */
-    fun keywordColor(): Color {
+    fun editorBackground(): Color {
         return try {
-            EditorColorsManager.getInstance().globalScheme
-                .getAttributes(DefaultLanguageHighlighterColors.KEYWORD)?.foregroundColor
-                ?: ACCENT
+            EditorColorsManager.getInstance().globalScheme.defaultBackground
         } catch (_: Exception) {
-            ACCENT
+            CODE_BODY_BG
         }
     }
 
     /**
-     * Get the comment color from the editor scheme.
+     * Get the global editor scheme's default foreground.
      */
-    fun commentColor(): Color {
+    fun editorForeground(): Color {
+        return try {
+            EditorColorsManager.getInstance().globalScheme.defaultForeground
+        } catch (_: Exception) {
+            CODE_HEADER_FG
+        }
+    }
+
+    // --- DefaultLanguageHighlighterColors (syntax highlighting palette) ---
+
+    /** Keyword color (e.g. `fun`, `val`, `if`) — useful for accent text, inline code. */
+    fun keywordColor(): Color = editorAttrColor(DefaultLanguageHighlighterColors.KEYWORD, ACCENT)
+
+    /** Line comment color — useful for muted/thinking text. */
+    fun commentColor(): Color = editorAttrColor(DefaultLanguageHighlighterColors.LINE_COMMENT, MUTED_TEXT)
+
+    /** Doc comment color — slightly brighter than line comments, for documentation-style text. */
+    fun docCommentColor(): Color = editorAttrColor(DefaultLanguageHighlighterColors.DOC_COMMENT, MUTED_TEXT)
+
+    /** String literal color — useful for inline code spans, file paths. */
+    fun stringColor(): Color = editorAttrColor(DefaultLanguageHighlighterColors.STRING, ACCENT)
+
+    /** Number literal color — useful for metrics, counters, token counts. */
+    fun numberColor(): Color = editorAttrColor(DefaultLanguageHighlighterColors.NUMBER, PRIMARY_TEXT)
+
+    /** Function declaration color — useful for tool names, function references. */
+    fun functionColor(): Color = editorAttrColor(DefaultLanguageHighlighterColors.FUNCTION_DECLARATION, ACCENT)
+
+    /** Class name color — useful for headers, titles, type references. */
+    fun classNameColor(): Color = editorAttrColor(DefaultLanguageHighlighterColors.CLASS_NAME, PRIMARY_TEXT)
+
+    /** Metadata/annotation color — useful for timestamps, metadata labels. */
+    fun metadataColor(): Color = editorAttrColor(DefaultLanguageHighlighterColors.METADATA, SECONDARY_TEXT)
+
+    /** Inline code in documentation — useful for inline code spans in messages. */
+    fun docInlineCodeColor(): Color = editorAttrColor(DefaultLanguageHighlighterColors.DOC_CODE_INLINE, ACCENT)
+
+    /** Valid string escape color — useful for highlighting special tokens. */
+    fun validEscapeColor(): Color = editorAttrColor(DefaultLanguageHighlighterColors.VALID_STRING_ESCAPE, ACCENT)
+
+    /** Invalid string escape color — useful for error highlighting in code. */
+    fun invalidEscapeColor(): Color = editorAttrColor(DefaultLanguageHighlighterColors.INVALID_STRING_ESCAPE, ERROR_TEXT)
+
+    // --- EditorColors (editor chrome / diff / gutter palette) ---
+
+    /** Selection background color — for selected items, active tab backgrounds. */
+    fun selectionBackground(): Color = editorColorKey(EditorColors.SELECTION_BACKGROUND_COLOR, ACCENT)
+
+    /** Notification background — for info/notification-style panels. */
+    fun notificationBackground(): Color = editorColorKey(EditorColors.NOTIFICATION_BACKGROUND, TOOL_CARD_BG)
+
+    /** Indent guide color — for subtle vertical/horizontal separators. */
+    fun indentGuideColor(): Color = editorColorKey(EditorColors.INDENT_GUIDE_COLOR, SUBTLE_BORDER)
+
+    /** Added lines color (diff green) — for success/added indicators. */
+    fun addedLinesColor(): Color = editorColorKey(EditorColors.ADDED_LINES_COLOR, SUCCESS)
+
+    /** Deleted lines color (diff red) — for error/deleted indicators. */
+    fun deletedLinesColor(): Color = editorColorKey(EditorColors.DELETED_LINES_COLOR, ERROR_BORDER)
+
+    /** Modified lines color (diff yellow/amber) — for in-progress/modified indicators. */
+    fun modifiedLinesColor(): Color = editorColorKey(EditorColors.MODIFIED_LINES_COLOR, WARNING)
+
+    /** Border lines color (diff borders) — for diff-style card borders. */
+    fun borderLinesColor(): Color = editorColorKey(EditorColors.BORDER_LINES_COLOR, SUBTLE_BORDER)
+
+    /** Hyperlink color (CTRL+CLICK) — for clickable links in messages. */
+    fun hyperlinkColor(): Color = editorAttrColor(EditorColors.REFERENCE_HYPERLINK_COLOR, ACCENT)
+
+    /** Documentation background — for documentation-style panels. */
+    fun documentationBackground(): Color = editorColorKey(EditorColors.DOCUMENTATION_COLOR, ASSISTANT_BUBBLE_BG)
+
+    /** Preview background — for code preview areas. */
+    fun previewBackground(): Color = editorColorKey(EditorColors.PREVIEW_BACKGROUND, CODE_BODY_BG)
+
+    /** Read-only background — for read-only code display areas. */
+    fun readonlyBackground(): Color = editorColorKey(EditorColors.READONLY_BACKGROUND_COLOR, CODE_BODY_BG)
+
+    /** Tearline color — for separator lines between sections. */
+    fun tearlineColor(): Color = editorColorKey(EditorColors.TEARLINE_COLOR, SEPARATOR)
+
+    /** Gutter background — for gutter-like side panels. */
+    fun gutterBackground(): Color = editorColorKey(EditorColors.GUTTER_BACKGROUND, PANEL_BG)
+
+    /** Caret row color — for highlighted/active row backgrounds. */
+    fun caretRowColor(): Color = editorColorKey(EditorColors.CARET_ROW_COLOR, ASSISTANT_BUBBLE_BG)
+
+    // --- Private helpers for editor scheme resolution ---
+
+    private fun editorAttrColor(key: com.intellij.openapi.editor.colors.TextAttributesKey, fallback: Color): Color {
         return try {
             EditorColorsManager.getInstance().globalScheme
-                .getAttributes(DefaultLanguageHighlighterColors.LINE_COMMENT)?.foregroundColor
-                ?: MUTED_TEXT
+                .getAttributes(key)?.foregroundColor ?: fallback
         } catch (_: Exception) {
-            MUTED_TEXT
+            fallback
         }
+    }
+
+    private fun editorColorKey(key: com.intellij.openapi.editor.colors.ColorKey, fallback: Color): Color {
+        return try {
+            EditorColorsManager.getInstance().globalScheme.getColor(key) ?: fallback
+        } catch (_: Exception) {
+            fallback
+        }
+    }
+
+    /**
+     * Convert a Color to an HTML hex string (e.g. "#0066CC").
+     * Useful for embedding editor-scheme colors into HTML styled text.
+     */
+    fun colorToHex(color: Color): String {
+        val r = color.red
+        val g = color.green
+        val b = color.blue
+        return String.format("#%02X%02X%02X", r, g, b)
     }
 
     // --- Helper Methods ---

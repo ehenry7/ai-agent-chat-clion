@@ -68,7 +68,7 @@ class TodoListPanel(
         leftPanel.add(titleLabel)
 
         val expandLabel = JBLabel(AllIcons.General.ChevronDown).apply {
-            foreground = JBColor(0x666666, 0x999999)
+            foreground = ThemeUtils.SECONDARY_TEXT
         }
 
         headerPanel.add(leftPanel, BorderLayout.WEST)
@@ -141,9 +141,9 @@ class TodoListPanel(
                 12f
             )
             foreground = when (item.status) {
-                "completed" -> JBColor(0x888888, 0x777777)
-                "in_progress" -> JBColor(0x0066CC, 0x4A9EFF)
-                else -> JBColor(0x333333, 0xCCCCCC)
+                "completed" -> ThemeUtils.MUTED_TEXT
+                "in_progress" -> ThemeUtils.ACCENT
+                else -> ThemeUtils.PRIMARY_TEXT
             }
         }
 

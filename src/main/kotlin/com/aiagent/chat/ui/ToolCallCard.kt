@@ -83,7 +83,7 @@ class ToolCallCard(
         header.add(leftPanel, BorderLayout.WEST)
 
         val expandLabel = JBLabel(AllIcons.General.ChevronDown).apply {
-            foreground = JBColor(0x666666, 0x999999)
+            foreground = ThemeUtils.SECONDARY_TEXT
         }
         header.add(expandLabel, BorderLayout.EAST)
 
@@ -143,21 +143,21 @@ class ToolCallCard(
 
     private fun getStatusColor(): JBColor {
         return when (status) {
-            ToolStatus.RUNNING -> JBColor(0x0066CC, 0x4A9EFF)
-            ToolStatus.COMPLETED -> JBColor(0x008800, 0x6BB26B)
-            ToolStatus.ERROR -> JBColor(0xCC0000, 0xE06C6C)
+            ToolStatus.RUNNING -> ThemeUtils.ACCENT
+            ToolStatus.COMPLETED -> ThemeUtils.SUCCESS
+            ToolStatus.ERROR -> ThemeUtils.ERROR_BORDER
         }
     }
 
     private fun getBorderColor(): java.awt.Color {
         return when (status) {
-            ToolStatus.RUNNING -> JBColor(0x0066CC, 0x4A9EFF)
-            ToolStatus.COMPLETED -> JBColor.border()
-            ToolStatus.ERROR -> JBColor(0xCC0000, 0xE06C6C)
+            ToolStatus.RUNNING -> ThemeUtils.ACCENT
+            ToolStatus.COMPLETED -> ThemeUtils.SUBTLE_BORDER
+            ToolStatus.ERROR -> ThemeUtils.ERROR_BORDER
         }
     }
 
     private fun getCardBackground(): JBColor {
-        return JBColor(0xF8F8F8, 0x2A2A2A)
+        return ThemeUtils.TOOL_CARD_BG
     }
 }

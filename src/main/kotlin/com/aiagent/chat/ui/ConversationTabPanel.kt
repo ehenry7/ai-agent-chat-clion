@@ -96,7 +96,7 @@ class ConversationTabPanel : JBPanel<ConversationTabPanel>(BorderLayout()) {
         }
         val combinedPanel = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).apply {
             isOpaque = true
-            background = JBColor(0xFFFFFF, 0x2B2B2B)
+            background = ThemeUtils.PANEL_BG
             border = JBUI.Borders.customLine(JBColor.border(), 1)
             add(newBtn)
             // Thin internal divider (part of the box, not a separate component)
@@ -566,14 +566,13 @@ class ConversationTabPanel : JBPanel<ConversationTabPanel>(BorderLayout()) {
                 11f
             )
             titleLabel.foreground = if (active) {
-                JBColor(0x4A9EFF, 0x6BB6FF)
+                ThemeUtils.ACCENT
             } else {
-                JBColor(0x666666, 0x999999)
+                ThemeUtils.SECONDARY_TEXT
             }
             isOpaque = active
             if (active) {
-                // Light blue in dark mode, dark blue in light theme
-                background = JBColor(0xD0E4FF, 0x1A3A5C)
+                background = JBColor.namedColor("TabbedPane.selectedBackground", JBColor(0xD0E4FF, 0x1A3A5C))
             }
         }
 

@@ -210,7 +210,7 @@ class LandingPanel(
 
         card.addMouseListener(object : MouseAdapter() {
             override fun mouseEntered(e: MouseEvent) {
-                card.background = JBColor(0xEAEAEA, 0x333333)
+                card.background = ThemeUtils.TOOL_CARD_BG
                 card.isOpaque = true
             }
 
@@ -281,7 +281,7 @@ class LandingPanel(
 
         card.addMouseListener(object : MouseAdapter() {
             override fun mouseEntered(e: MouseEvent) {
-                card.background = JBColor(0xEAEAEA, 0x333333)
+                card.background = ThemeUtils.TOOL_CARD_BG
                 card.isOpaque = true
             }
 

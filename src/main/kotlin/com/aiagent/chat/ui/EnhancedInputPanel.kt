@@ -398,7 +398,7 @@ class EnhancedInputPanel(
                     super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus)
                     border = JBUI.Borders.empty(4, 8)
                     if (isSelected) {
-                        background = JBColor(0x3870B0, 0x2D5A8E)
+                        background = ThemeUtils.ACCENT
                         foreground = JBColor.WHITE
                     }
                     return this

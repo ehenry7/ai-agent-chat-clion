@@ -55,7 +55,7 @@ class UserMessagePanel(
         val textPane = HtmlPaneFactory.createHtmlPane(
             htmlBody = htmlBody,
             bgColor = background,
-            fgColor = JBColor(0x333333, 0xDDDDDD)
+            fgColor = ThemeUtils.PRIMARY_TEXT
         )
         com.aiagent.chat.debug.DebugLog.info("UserMessagePanel", "buildBody: textPane created preferredSize=${textPane.preferredSize}, font=${textPane.font}")
         wrapper.add(textPane, BorderLayout.CENTER)

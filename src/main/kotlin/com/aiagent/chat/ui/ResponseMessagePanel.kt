@@ -45,7 +45,7 @@ class ResponseMessagePanel(
 
     override fun getRoleIcon(): Icon = AllIcons.General.Balloon
 
-    override fun getBubbleBackground(): JBColor = JBColor(0xFAFAFA, 0x232527)
+    override fun getBubbleBackground(): JBColor = ThemeUtils.ASSISTANT_BUBBLE_BG
 
     init {
         buildBody()
@@ -109,7 +109,7 @@ class ResponseMessagePanel(
                 val editorPane = HtmlPaneFactory.createHtmlPane(
                     htmlBody = htmlBody,
                     bgColor = background,
-                    fgColor = JBColor(0x333333, 0xDDDDDD),
+                    fgColor = ThemeUtils.PRIMARY_TEXT,
                     fontSize = COMPACT_FONT_SIZE
                 )
                 editorPane.alignmentX = JPanel.LEFT_ALIGNMENT
@@ -145,14 +145,16 @@ class ResponseMessagePanel(
                     .replace("<", "&lt;")
                     .replace(">", "&gt;")
                     .replace("\n", "<br>")
+                val thinkingFgHex = ThemeUtils.colorToHex(ThemeUtils.commentColor())
+                val thinkingLabelHex = ThemeUtils.colorToHex(ThemeUtils.metadataColor())
                 val thinkingHtml = "<html><body style='font-family: monospace; font-size: 11px; " +
-                        "color: #888888; font-style: italic; word-wrap: break-word;'>" +
-                        "<b style='font-size: 10px; color: #999999;'>Thinking</b><br>" +
+                        "color: $thinkingFgHex; font-style: italic; word-wrap: break-word;'>" +
+                        "<b style='font-size: 10px; color: $thinkingLabelHex;'>Thinking</b><br>" +
                         escaped + "</body></html>"
                 val thinkingPane = HtmlPaneFactory.createHtmlPane(
                     htmlBody = thinkingHtml,
                     bgColor = background,
-                    fgColor = JBColor(0x888888, 0x777777)
+                    fgColor = ThemeUtils.MUTED_TEXT
                 )
                 thinkingPane.alignmentX = JPanel.LEFT_ALIGNMENT
                 wrapper.add(thinkingPane)
@@ -252,7 +254,7 @@ class ResponseMessagePanel(
         var content = HtmlPaneFactory.insertWbr(text)
         content = content.replace(Regex("\\*\\*([^*]+)\\*\\*"), "<b>$1</b>")
         content = content.replace(Regex("\\*([^*]+)\\*"), "<i>$1</i>")
-        val codeColor = if (JBColor.isBright()) "#0066CC" else "#6CB6FF"
+        val codeColor = ThemeUtils.colorToHex(ThemeUtils.docInlineCodeColor())
         content = content.replace(Regex("`([^`]+)`"), "<code style='color: $codeColor; font-family: monospace;'>$1</code>")
         return content
     }
@@ -279,7 +281,7 @@ class ResponseMessagePanel(
                 sb.append("<tr>")
                 val cells = tLine.removePrefix("|").removeSuffix("|").split("|")
                 for (cell in cells) {
-                    sb.append("<td style='padding: 4px 8px; border: 1px solid #777777;'>${HtmlPaneFactory.insertWbr(cell.trim())}</td>")
+                    sb.append("<td style='padding: 4px 8px; border: 1px solid ${ThemeUtils.colorToHex(ThemeUtils.indentGuideColor())};'>${HtmlPaneFactory.insertWbr(cell.trim())}</td>")
                 }
                 sb.append("</tr>")
             } else {

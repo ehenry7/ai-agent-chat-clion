@@ -1549,7 +1549,7 @@ class ThinkingIndicator : JLabel() {
 
     init {
         font = font.deriveFont(java.awt.Font.BOLD, 13f)
-        foreground = JBColor(0x4A9EFF, 0x6BB6FF)
+        foreground = ThemeUtils.ACCENT
         isOpaque = false
         text = ""
         preferredSize = Dimension(120, 16)

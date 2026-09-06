@@ -41,7 +41,7 @@ class StreamingResponsePanel(
 
     override fun getRoleIcon(): Icon = AllIcons.General.Balloon
 
-    override fun getBubbleBackground(): JBColor = JBColor(0xFAFAFA, 0x232527)
+    override fun getBubbleBackground(): JBColor = ThemeUtils.ASSISTANT_BUBBLE_BG
 
     override fun buildBody() {
         textPane = DynamicHeightTextPane().apply {
@@ -218,7 +218,7 @@ class StreamingResponsePanel(
         var content = text
         content = content.replace(Regex("\\*\\*([^*]+)\\*\\*"), "<b>$1</b>")
         content = content.replace(Regex("\\*([^*]+)\\*"), "<i>$1</i>")
-        val codeColor = if (JBColor.isBright()) "#0066CC" else "#6CB6FF"
+        val codeColor = ThemeUtils.colorToHex(ThemeUtils.docInlineCodeColor())
         content = content.replace(Regex("`([^`]+)`"), "<code style='color: $codeColor; font-family: monospace;'>$1</code>")
         return content
     }
