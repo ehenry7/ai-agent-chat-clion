@@ -791,11 +791,19 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                     createErrorPanel(text)
                 }
                 else -> {
-                    // New assistant message: collapse tool calls from the previous assistant turn
-                    activeAssistantPanel?.collapseToolCalls()
-                    val panel = ResponseMessagePanel(text, project)
-                    activeAssistantPanel = panel
-                    panel
+                    // Assistant message: append to existing panel if available (combine consecutive messages)
+                    val existing = activeAssistantPanel
+                    if (existing != null) {
+                        // Collapse tool calls from the previous turn, then append
+                        existing.collapseToolCalls()
+                        existing.appendMessage(text)
+                        // No new top-level component — just updated the existing bubble
+                        return@invokeLater
+                    } else {
+                        val panel = ResponseMessagePanel(text, project)
+                        activeAssistantPanel = panel
+                        panel
+                    }
                 }
             }
 

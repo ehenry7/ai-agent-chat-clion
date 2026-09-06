@@ -22,10 +22,13 @@ import javax.swing.SwingUtilities
  * Phase 2: Rich Response Rendering with code editors.
  */
 class ResponseMessagePanel(
-    private val messageText: String,
+    private val initialMessageText: String,
     private val project: Project? = null,
     private val thinkingText: String = ""
 ) : BaseMessagePanel("Assistant", "assistant") {
+
+    /** Accumulated message text (for copy-to-clipboard). */
+    private val allMessageText = StringBuilder(initialMessageText)
 
     /** Collapsible tool calls section embedded in this assistant bubble. */
     private var toolCallsSection: ToolCallsSection? = null
@@ -51,6 +54,59 @@ class ResponseMessagePanel(
                 bodyWrapper?.add(toolCallsSection)
             }
             toolCallsSection!!.addToolCall(name, output, status, autoExpand = autoExpand)
+            bodyWrapper?.revalidate()
+            bodyWrapper?.repaint()
+        }
+    }
+
+    /**
+     * Append a new assistant message to this bubble, separated by a bullet divider.
+     * Consecutive assistant messages are combined into one bubble.
+     */
+    fun appendMessage(text: String) {
+        SwingUtilities.invokeLater {
+            allMessageText.append("\n\n").append(text)
+
+            // Add a visual bullet separator before the new content
+            val separatorHtml = "<html><body style='margin: 6px 0; color: #999999; font-size: 11px;'>" +
+                    "• • •" +
+                    "</body></html>"
+            val separatorPane = HtmlPaneFactory.createHtmlPane(
+                htmlBody = separatorHtml,
+                bgColor = background,
+                fgColor = JBColor(0x999999, 0x666666)
+            )
+            separatorPane.alignmentX = JPanel.LEFT_ALIGNMENT
+            bodyWrapper?.add(separatorPane)
+
+            // Add the new message content
+            if (project != null) {
+                val segments = CodeBlockPanel.parseSegments(text)
+                for (segment in segments) {
+                    when (segment) {
+                        is CodeBlockPanel.ResponseSegment.Text -> {
+                            val html = renderMarkdown(segment.content)
+                            val textPane = createTextPane(html)
+                            textPane.alignmentX = JPanel.LEFT_ALIGNMENT
+                            bodyWrapper?.add(textPane)
+                        }
+                        is CodeBlockPanel.ResponseSegment.Code -> {
+                            val codePanel = CodeBlockPanel(project, segment.content, segment.language)
+                            codePanel.alignmentX = JPanel.LEFT_ALIGNMENT
+                            bodyWrapper?.add(codePanel)
+                        }
+                    }
+                }
+            } else {
+                val editorPane = HtmlPaneFactory.createHtmlPane(
+                    htmlBody = renderMarkdown(text),
+                    bgColor = background,
+                    fgColor = JBColor(0x333333, 0xDDDDDD)
+                )
+                editorPane.alignmentX = JPanel.LEFT_ALIGNMENT
+                bodyWrapper?.add(editorPane)
+            }
+
             bodyWrapper?.revalidate()
             bodyWrapper?.repaint()
         }
@@ -94,7 +150,7 @@ class ResponseMessagePanel(
 
             if (project != null) {
                 // Use segment-based rendering with CodeBlockPanel for code blocks
-                val segments = CodeBlockPanel.parseSegments(messageText)
+                val segments = CodeBlockPanel.parseSegments(initialMessageText)
                 for ((index, segment) in segments.withIndex()) {
                     when (segment) {
                         is CodeBlockPanel.ResponseSegment.Text -> {
@@ -117,7 +173,7 @@ class ResponseMessagePanel(
             } else {
                 // Fallback: pure HTML rendering (no editor)
                 val editorPane = HtmlPaneFactory.createHtmlPane(
-                    htmlBody = renderMarkdown(messageText),
+                    htmlBody = renderMarkdown(initialMessageText),
                     bgColor = background,
                     fgColor = JBColor(0x333333, 0xDDDDDD)
                 )
@@ -145,7 +201,7 @@ class ResponseMessagePanel(
         return pane
     }
 
-    override fun getPlainText(): String = messageText
+    override fun getPlainText(): String = allMessageText.toString()
 
     /**
      * Renders markdown to HTML with support for:
