@@ -29,7 +29,7 @@ data class Plan(
                 "skipped" -> "[~]"
                 else -> "[ ]"
             }
-            lines.add("$box ${step.description}")
+            lines.add("$box ${step.id}: ${step.description}")
         }
         return lines.joinToString("\n")
     }
@@ -61,13 +61,35 @@ class PlanManager {
 
     fun updateStep(stepId: String, status: String): Boolean {
         val plan = currentPlan ?: return false
-        // Check if the step exists
-        if (plan.steps.none { it.id == stepId }) return false
+        // Try exact ID match first (e.g. "step_1")
+        val normalizedId = normalizeStepId(stepId, plan.steps)
+        if (plan.steps.none { it.id == normalizedId }) return false
         val updatedSteps = plan.steps.map {
-            if (it.id == stepId) it.copy(status = status) else it
+            if (it.id == normalizedId) it.copy(status = status) else it
         }
         currentPlan = plan.copy(steps = updatedSteps)
         return true
+    }
+
+    /**
+     * Normalize a step ID provided by the LLM to match internal step IDs.
+     * Accepts:
+     *   - Exact ID: "step_1" → "step_1"
+     *   - Numeric index: "1" → "step_1" (1-based)
+     *   - With prefix variants: "step1", "Step_1", "STEP 1" → "step_1"
+     */
+    private fun normalizeStepId(input: String, steps: List<PlanStep>): String {
+        val trimmed = input.trim()
+        // Exact match
+        if (steps.any { it.id == trimmed }) return trimmed
+        // Try extracting a number from the input
+        val numMatch = Regex("\\d+").find(trimmed)
+        if (numMatch != null) {
+            val num = numMatch.value.toInt()
+            val candidate = "step_$num"
+            if (steps.any { it.id == candidate }) return candidate
+        }
+        return trimmed
     }
 
     fun clearPlan() {
@@ -123,13 +145,20 @@ class PlanManager {
                 val match = Regex("^(?:-\\s*)?\\[\\s*([ xX\\-~])\\s*\\]\\s+(.+)$").find(line)
                 if (match != null) {
                     val mark = match.groupValues[1]
-                    val desc = match.groupValues[2]
+                    var desc = match.groupValues[2]
                     val status = when (mark) {
                         "x", "X" -> "completed"
                         "-", "~" -> "in_progress"
                         else -> "pending"
                     }
-                    val id = "step_${steps.size + 1}"
+                    // Strip leading "step_N: " prefix if present (from get_plan output)
+                    val idMatch = Regex("^step_(\\d+)\\s*:\\s*(.+)$").find(desc)
+                    val id = if (idMatch != null) {
+                        desc = idMatch.groupValues[2]
+                        "step_${idMatch.groupValues[1]}"
+                    } else {
+                        "step_${steps.size + 1}"
+                    }
                     steps.add(PlanStep(id, desc, status))
                 }
             }

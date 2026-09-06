@@ -371,7 +371,8 @@ object ToolRegistry {
         ToolDeclaration(
             definition = ToolDefinition(function = ToolFunctionDef(
                 name = "update_plan",
-                description = "Update the status of a plan step. Use step IDs from get_plan. " +
+                description = "Update the status of a plan step. Step IDs are shown by get_plan in the format 'step_N: description' " +
+                    "(e.g. step_1, step_2). You can also pass just the number (e.g. '1' for step_1). " +
                     "Mark a step as 'in_progress' BEFORE you start working on it, and 'completed' immediately AFTER you finish it. " +
                     "Update steps in real time — do NOT batch all updates at the end.",
                 parameters = paramsObject {

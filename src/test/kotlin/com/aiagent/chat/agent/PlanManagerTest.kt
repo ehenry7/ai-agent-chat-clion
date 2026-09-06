@@ -49,9 +49,9 @@ class PlanManagerTest {
         )
         val md = plan.toMarkdown()
         assertTrue(md.contains("## Plan: Test Plan"))
-        assertTrue(md.contains("[x] First step"))
-        assertTrue(md.contains("[-] Second step"))
-        assertTrue(md.contains("[ ] Third step"))
+        assertTrue(md.contains("[x] step_1: First step"))
+        assertTrue(md.contains("[-] step_2: Second step"))
+        assertTrue(md.contains("[ ] step_3: Third step"))
     }
 
     @Test
@@ -126,5 +126,53 @@ class PlanManagerTest {
         val plan = PlanManager.parsePlanMarkdown(md)
         assertEquals(1, plan.steps.size)
         assertEquals("in_progress", plan.steps[0].status)
+    }
+
+    @Test
+    fun testUpdateStepByNumericIndex() {
+        val pm = PlanManager()
+        pm.setPlanFromMarkdown("## Plan: My Plan\n- [ ] Step 1\n- [ ] Step 2")
+        // LLM often passes just "1" instead of "step_1"
+        assertTrue(pm.updateStep("1", "in_progress"))
+        assertEquals("in_progress", pm.getPlan()!!.steps[0].status)
+        // Also test "2"
+        assertTrue(pm.updateStep("2", "completed"))
+        assertEquals("completed", pm.getPlan()!!.steps[1].status)
+    }
+
+    @Test
+    fun testUpdateStepByExactId() {
+        val pm = PlanManager()
+        pm.setPlanFromMarkdown("## Plan: My Plan\n- [ ] Step 1\n- [ ] Step 2")
+        assertTrue(pm.updateStep("step_1", "completed"))
+        assertEquals("completed", pm.getPlan()!!.steps[0].status)
+    }
+
+    @Test
+    fun testRoundTripWithStepIds() {
+        val pm = PlanManager()
+        pm.setPlanFromMarkdown("## Plan: Test\n- [ ] Do A\n- [x] Done B")
+        val md = pm.getPlan()!!.toMarkdown()
+        // Should contain step IDs
+        assertTrue(md.contains("step_1: Do A"))
+        assertTrue(md.contains("step_2: Done B"))
+        // Re-parse should preserve IDs and descriptions
+        val reparsed = PlanManager.parsePlanMarkdown(md)
+        assertEquals("Test", reparsed.title)
+        assertEquals(2, reparsed.steps.size)
+        assertEquals("Do A", reparsed.steps[0].description)
+        assertEquals("Done B", reparsed.steps[1].description)
+        assertEquals("step_1", reparsed.steps[0].id)
+        assertEquals("step_2", reparsed.steps[1].id)
+        assertEquals("pending", reparsed.steps[0].status)
+        assertEquals("completed", reparsed.steps[1].status)
+    }
+
+    @Test
+    fun testUpdateStepNonexistent() {
+        val pm = PlanManager()
+        pm.setPlanFromMarkdown("## Plan: My Plan\n- [ ] Step 1")
+        assertFalse(pm.updateStep("99", "completed"))
+        assertFalse(pm.updateStep("abc", "completed"))
     }
 }
