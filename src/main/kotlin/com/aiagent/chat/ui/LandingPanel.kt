@@ -27,10 +27,12 @@ class LandingPanel(
     private val onQuickAction: (String) -> Unit,
     private val onConfigure: () -> Unit,
     private val onNewSession: () -> Unit,
-    private val onSessionSelected: (ChatMeta) -> Unit
+    private val onSessionSelected: (ChatMeta) -> Unit,
+    private val onDeleteSession: (ChatMeta) -> Unit = {}
 ) : JBPanel<LandingPanel>(BorderLayout()) {
 
-    private val sessionsListPanel = JPanel(GridLayout(0, 1, 6, 6)).apply {
+    private val sessionsListPanel = JPanel().apply {
+        layout = javax.swing.BoxLayout(this, javax.swing.BoxLayout.Y_AXIS)
         isOpaque = false
     }
 
@@ -141,9 +143,15 @@ class LandingPanel(
             val dateFormat = SimpleDateFormat("MMM d, yyyy HH:mm")
             val sorted = sessions.sortedByDescending { it.updatedAt }
             for (meta in sorted) {
-                sessionsListPanel.add(createSessionCard(meta, dateFormat))
+                val card = createSessionCard(meta, dateFormat)
+                card.maximumSize = java.awt.Dimension(java.lang.Integer.MAX_VALUE, card.preferredSize.height)
+                sessionsListPanel.add(card)
+                sessionsListPanel.add(javax.swing.Box.createVerticalStrut(6))
             }
         }
+
+        // Vertical glue pushes all session cards to the top
+        sessionsListPanel.add(javax.swing.Box.createVerticalGlue())
 
         sessionsListPanel.revalidate()
         sessionsListPanel.repaint()
@@ -181,11 +189,22 @@ class LandingPanel(
 
         card.add(leftPanel, BorderLayout.CENTER)
 
-        // Right side: open icon hint
+        // Right side: delete button + open icon hint
         val iconLabel = JBLabel(AllIcons.Actions.Forward).apply {
             foreground = JBColor(0x999999, 0x666666)
         }
-        val iconPanel = JPanel(FlowLayout(FlowLayout.RIGHT, 0, 0)).apply { isOpaque = false }
+        val deleteBtn = JButton(AllIcons.Actions.Close).apply {
+            toolTipText = "Delete session"
+            isContentAreaFilled = false
+            isBorderPainted = false
+            isFocusPainted = false
+            margin = JBUI.insets(2)
+            preferredSize = java.awt.Dimension(20, 20)
+            cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
+            addActionListener { onDeleteSession(meta) }
+        }
+        val iconPanel = JPanel(FlowLayout(FlowLayout.RIGHT, 4, 0)).apply { isOpaque = false }
+        iconPanel.add(deleteBtn)
         iconPanel.add(iconLabel)
         card.add(iconPanel, BorderLayout.EAST)
 
