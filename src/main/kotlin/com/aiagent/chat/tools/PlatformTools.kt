@@ -81,17 +81,29 @@ class PlatformToolHandler(
 
     fun resolveContainedFile(relPath: String): File {
         val baseDir = File(project.basePath ?: throw IllegalStateException("No project base path"))
+        val baseCanonical = baseDir.canonicalPath
         // Sanitize: trim whitespace, normalize separators, remove trailing slashes
         val sanitized = relPath.trim()
             .replace("\\", "/")
             .removeSuffix("/")
             .ifEmpty { "." }
+        // Detect absolute paths (e.g. "C:/Users/...") — File(parent, child) on Windows
+        // does NOT treat forward-slash absolute paths as absolute when a parent is given,
+        // producing an invalid concatenated path like "base\C:\Users\...". Resolve directly.
+        val isAbsolute = sanitized.length >= 3 &&
+            sanitized[1] == ':' &&
+            (sanitized[2] == '/' || sanitized[2] == '\\') &&
+            sanitized[0].isLetter()
         val target = try {
-            File(baseDir, sanitized).canonicalFile
+            if (isAbsolute) {
+                File(sanitized).canonicalFile
+            } else {
+                File(baseDir, sanitized).canonicalFile
+            }
         } catch (e: java.io.IOException) {
             throw SecurityException("Invalid path '$relPath': ${e.message}")
         }
-        if (!target.path.startsWith(baseDir.canonicalPath)) {
+        if (!target.path.startsWith(baseCanonical)) {
             throw SecurityException("Path escapes workspace: $relPath")
         }
         return target
