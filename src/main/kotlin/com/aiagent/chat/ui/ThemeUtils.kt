@@ -129,32 +129,6 @@ object ThemeUtils {
         }
     }
 
-    // --- Editor scheme color helpers (resolved lazily from EditorColorsManager) ---
-    // These read from the active editor color scheme, so they reflect the user's
-    // chosen syntax-highlighting theme (Darcula, custom, etc.).
-
-    /**
-     * Get the global editor scheme's default background.
-     */
-    fun editorBackground(): Color {
-        return try {
-            EditorColorsManager.getInstance().globalScheme.defaultBackground
-        } catch (_: Exception) {
-            CODE_BODY_BG
-        }
-    }
-
-    /**
-     * Get the global editor scheme's default foreground.
-     */
-    fun editorForeground(): Color {
-        return try {
-            EditorColorsManager.getInstance().globalScheme.defaultForeground
-        } catch (_: Exception) {
-            CODE_HEADER_FG
-        }
-    }
-
     // --- DefaultLanguageHighlighterColors (syntax highlighting palette) ---
 
     /** Keyword color (e.g. `fun`, `val`, `if`) — useful for accent text, inline code. */
