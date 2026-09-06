@@ -373,10 +373,14 @@ class EnhancedInputPanel(
 
         // Update the list model in-place if popup is already visible
         if (slashPopup != null && slashPopup!!.isDisplayable && slashList != null) {
+            // Preserve current selection so arrow-key navigation isn't reset
+            val prevIndex = slashList!!.selectedIndex
             slashListModel.clear()
             filtered.forEach { slashListModel.addElement(it) }
-            slashList!!.selectedIndex = 0
-            slashList!!.ensureIndexIsVisible(0)
+            // Clamp to valid range (list may have shrunk due to filtering)
+            val newIndex = if (prevIndex in 0 until filtered.size) prevIndex else 0
+            slashList!!.selectedIndex = newIndex
+            slashList!!.ensureIndexIsVisible(newIndex)
             return
         }
 
