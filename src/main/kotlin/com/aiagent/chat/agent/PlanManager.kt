@@ -74,6 +74,25 @@ class PlanManager {
         currentPlan = null
     }
 
+    /**
+     * Returns true if there is an active plan with at least one step
+     * that is not "completed" or "skipped".
+     */
+    fun hasIncompleteSteps(): Boolean {
+        val plan = currentPlan ?: return false
+        return plan.steps.any { it.status != "completed" && it.status != "skipped" }
+    }
+
+    /**
+     * Returns a summary of incomplete steps for nudge messages.
+     */
+    fun incompleteStepsSummary(): String {
+        val plan = currentPlan ?: return ""
+        val incomplete = plan.steps.filter { it.status != "completed" && it.status != "skipped" }
+        if (incomplete.isEmpty()) return ""
+        return incomplete.joinToString("\n") { "  - [${it.status}] ${it.id}: ${it.description}" }
+    }
+
     fun toSystemPromptSection(): String = currentPlan?.toSystemPromptSection() ?: ""
 
     companion object {

@@ -291,6 +291,22 @@ class AgentEngine(
             if (!assistantResponse.content.isNullOrBlank()) {
                 messages.add(assistantResponse)
                 onDelta(AgentDelta.Assistant(assistantResponse.content))
+
+                // Check if the plan has incomplete steps — if so, nudge the agent
+                // to continue instead of ending the loop prematurely.
+                if (planManager.hasIncompleteSteps() && step < maxSteps - 1) {
+                    val incomplete = planManager.incompleteStepsSummary()
+                    val nudge = ChatMessage(MessageRole.USER,
+                        "You indicated you are done, but the plan still has incomplete steps:\n$incomplete\n\n" +
+                        "Please continue working on the remaining steps. Use update_plan to mark steps as in_progress or completed as you work."
+                    )
+                    messages.add(nudge)
+                    newMessages.add(nudge)
+                    onDelta(AgentDelta.Status("[plan has incomplete steps — continuing]"))
+                    stateMachine.transitionTo(AgentSessionState.GENERATING, "Plan incomplete, nudging agent to continue")
+                    continue
+                }
+
                 stateMachine.transitionTo(AgentSessionState.COMPLETED, "Assistant provided final response")
                 break
             } else {
@@ -493,6 +509,22 @@ class AgentEngine(
             if (!assistantResponse.content.isNullOrBlank()) {
                 messages.add(assistantResponse)
                 onDelta(AgentDelta.Assistant(assistantResponse.content))
+
+                // Check if the plan has incomplete steps — if so, nudge the agent
+                // to continue instead of ending the loop prematurely.
+                if (planManager.hasIncompleteSteps() && step < maxSteps - 1) {
+                    val incomplete = planManager.incompleteStepsSummary()
+                    val nudge = ChatMessage(MessageRole.USER,
+                        "You indicated you are done, but the plan still has incomplete steps:\n$incomplete\n\n" +
+                        "Please continue working on the remaining steps. Use update_plan to mark steps as in_progress or completed as you work."
+                    )
+                    messages.add(nudge)
+                    newMessages.add(nudge)
+                    onDelta(AgentDelta.Status("[plan has incomplete steps — continuing]"))
+                    stateMachine.transitionTo(AgentSessionState.GENERATING, "Plan incomplete, nudging agent to continue")
+                    continue
+                }
+
                 stateMachine.transitionTo(AgentSessionState.COMPLETED, "Assistant provided final response")
                 break
             } else {
@@ -604,6 +636,11 @@ class AgentEngine(
                 "Once you understand the task, use 'request_phase_change' with target_phase='execution' to unlock mutation tools.\n" +
                 "If a tool call is denied by the user, respect the denial reason and adjust your approach accordingly.\n" +
                 "Use set_plan to create a structured task plan, get_plan to check it, and update_plan to mark steps as completed.\n" +
+                "IMPORTANT: You MUST update plan steps in real time as you work. Before starting a step, mark it as 'in_progress' using update_plan. " +
+                "Immediately after completing a step, mark it as 'completed' using update_plan. " +
+                "Do NOT batch all plan updates at the end — the user needs to see your progress as you go.\n" +
+                "Do NOT claim the task is done or provide a final summary while any plan step is still 'pending' or 'in_progress'. " +
+                "Only give a final summary when ALL plan steps are marked 'completed' or 'skipped'.\n" +
                 "Use compress_chat_probe to check if context is getting long, and compress_chat_apply to compact it.\n" +
                 "Use ask_questions to ask the user structured questions when you need clarification.\n" +
                 "Use undo_textdoc to revert the last file edit if you made a mistake.\n" +
