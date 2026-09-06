@@ -62,6 +62,13 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
 
     private val conversationTabPanel = ConversationTabPanel()
     private val todoListPanel = TodoListPanel()
+    private val planPanel = PlanPanel()
+
+    private val todoPlanTabbedPane = javax.swing.JTabbedPane().apply {
+        isOpaque = false
+        addTab("Todo", todoListPanel)
+        addTab("Plan", planPanel)
+    }
 
     private val enhancedInputPanel = EnhancedInputPanel(
         project = project,
@@ -229,7 +236,10 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
         },
         approvalMode = approvalMode,
         askQuestionsHandler = com.aiagent.chat.tools.AskQuestionsHandler(project),
-        planManager = planManager
+        planManager = planManager,
+        onPlanUpdated = {
+            SwingUtilities.invokeLater { planPanel.updatePlan(planManager.getPlan()) }
+        }
     )
 
     init {
@@ -269,6 +279,8 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
             conversationTabPanel.newConversation("Session ${tabCount + 1}")
             todoList = emptyList()
             todoListPanel.updateItems(emptyList())
+            planManager.clearPlan()
+            planPanel.updatePlan(null)
         }
 
         conversationTabPanel.onMenuClick = { source -> showMenuPopup(source) }
@@ -794,7 +806,7 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
         val todoScrollWrapper = JPanel(BorderLayout()).apply {
             isOpaque = false
             border = JBUI.Borders.empty(4, 8, 0, 8)
-            add(todoListPanel, BorderLayout.CENTER)
+            add(todoPlanTabbedPane, BorderLayout.CENTER)
         }
         container.add(todoScrollWrapper, BorderLayout.CENTER)
 
@@ -1233,6 +1245,8 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                             }
                         }
                         usageTracker.reset()
+                        planManager.clearPlan()
+                        planPanel.updatePlan(null)
                     }
                     SlashCommandAction.NEW_SESSION -> {
                         conversationTabPanel.onNewTab?.invoke()

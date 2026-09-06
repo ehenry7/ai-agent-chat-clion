@@ -38,6 +38,7 @@ class PlatformToolHandler(
     val commandSafety: CommandSafety = CommandSafety(),
     val askQuestionsHandler: AskQuestionsHandler? = null,
     val planManager: com.aiagent.chat.agent.PlanManager? = null,
+    var onPlanUpdated: (() -> Unit)? = null,
     var contextCompactor: com.aiagent.chat.agent.ContextCompactor? = null,
     var getMessages: (() -> List<com.aiagent.chat.model.ChatMessage>)? = null,
     var setMessages: ((List<com.aiagent.chat.model.ChatMessage>) -> Unit)? = null
@@ -458,6 +459,7 @@ class PlatformToolHandler(
         val pm = planManager ?: return "Error: Plan manager not available"
         pm.setPlanFromMarkdown(planMarkdown)
         val plan = pm.getPlan()
+        onPlanUpdated?.invoke()
         return "Plan set: '${plan?.title}' with ${plan?.steps?.size ?: 0} steps."
     }
 
@@ -470,6 +472,7 @@ class PlatformToolHandler(
     fun updatePlan(stepId: String, status: String): String {
         val pm = planManager ?: return "Error: Plan manager not available"
         val updated = pm.updateStep(stepId, status)
+        if (updated) onPlanUpdated?.invoke()
         return if (updated) "Updated step '$stepId' to status '$status'." else "Error: Step '$stepId' not found in current plan."
     }
 
