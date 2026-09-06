@@ -170,7 +170,7 @@ class StreamingResponsePanel(
 
     private fun renderHtml() {
         val html = renderStreamingMarkdown(textBuilder.toString())
-        textPane.text = "<html><body style='font-family: sans-serif; font-size: 12px; word-wrap: break-word;'>" +
+        textPane.text = "<html><body style='font-family: sans-serif; font-size: 11px; word-wrap: break-word;'>" +
                 html + "</body></html>"
         // Trigger revalidate so DynamicHeightTextPane recalculates its height
         // after the content changes. Without this, the panel doesn't grow

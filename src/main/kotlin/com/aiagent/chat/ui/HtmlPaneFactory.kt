@@ -87,9 +87,10 @@ object HtmlPaneFactory {
         htmlBody: String,
         bgColor: Color,
         fgColor: Color? = null,
-        border: javax.swing.border.Border = JBUI.Borders.empty(2, 0)
+        border: javax.swing.border.Border = JBUI.Borders.empty(2, 0),
+        fontSize: String = "12px"
     ): JTextPane {
-        com.aiagent.chat.debug.DebugLog.info("HtmlPane", "createHtmlPane: htmlBody.length=${htmlBody.length}, bgColor=$bgColor, fgColor=$fgColor, border=$border")
+        com.aiagent.chat.debug.DebugLog.info("HtmlPane", "createHtmlPane: htmlBody.length=${htmlBody.length}, bgColor=$bgColor, fgColor=$fgColor, border=$border, fontSize=$fontSize")
         return DynamicHeightTextPane().apply {
             contentType = "text/html"
             editorKit = HTMLEditorKit()
@@ -99,7 +100,7 @@ object HtmlPaneFactory {
             putClientProperty(JTextPane.HONOR_DISPLAY_PROPERTIES, true)
             // Don't bake color into HTML body style — HONOR_DISPLAY_PROPERTIES will
             // use the component's foreground (a JBColor) which updates on theme change.
-            text = "<html><body style='font-family: sans-serif; font-size: 12px; word-wrap: break-word;'>" +
+            text = "<html><body style='font-family: sans-serif; font-size: $fontSize; word-wrap: break-word;'>" +
                     htmlBody + "</body></html>"
             this.border = border
             com.aiagent.chat.debug.DebugLog.info(

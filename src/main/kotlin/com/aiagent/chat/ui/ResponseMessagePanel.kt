@@ -34,6 +34,15 @@ class ResponseMessagePanel(
     private var toolCallsSection: ToolCallsSection? = null
     private var bodyWrapper: JPanel? = null
 
+    companion object {
+        private const val COMPACT_FONT_SIZE = "11px"
+        private const val NORMAL_FONT_SIZE = "12px"
+    }
+
+    /** Tracks text panes from the most recent buildBody/appendMessage batch for font promotion. */
+    private data class TrackedPane(val pane: JTextPane, val htmlBody: String)
+    private val lastBatchPanes: MutableList<TrackedPane> = mutableListOf()
+
     override fun getRoleIcon(): Icon = AllIcons.General.Balloon
 
     override fun getBubbleBackground(): JBColor = JBColor(0xFAFAFA, 0x232527)
@@ -71,6 +80,9 @@ class ResponseMessagePanel(
         SwingUtilities.invokeLater {
             allMessageText.append("\n\n").append(text)
 
+            // Clear previous batch — only the most recent batch is eligible for promotion
+            lastBatchPanes.clear()
+
             // No visual separator between consecutive assistant messages — just append content directly
 
             // Add the new message content
@@ -80,9 +92,10 @@ class ResponseMessagePanel(
                     when (segment) {
                         is CodeBlockPanel.ResponseSegment.Text -> {
                             val html = renderMarkdown(segment.content)
-                            val textPane = createTextPane(html)
+                            val textPane = createTextPane(html, COMPACT_FONT_SIZE)
                             textPane.alignmentX = JPanel.LEFT_ALIGNMENT
                             bodyWrapper?.add(textPane)
+                            lastBatchPanes.add(TrackedPane(textPane, html))
                         }
                         is CodeBlockPanel.ResponseSegment.Code -> {
                             val codePanel = CodeBlockPanel(project, segment.content, segment.language)
@@ -92,13 +105,16 @@ class ResponseMessagePanel(
                     }
                 }
             } else {
+                val htmlBody = renderMarkdown(text)
                 val editorPane = HtmlPaneFactory.createHtmlPane(
-                    htmlBody = renderMarkdown(text),
+                    htmlBody = htmlBody,
                     bgColor = background,
-                    fgColor = JBColor(0x333333, 0xDDDDDD)
+                    fgColor = JBColor(0x333333, 0xDDDDDD),
+                    fontSize = COMPACT_FONT_SIZE
                 )
                 editorPane.alignmentX = JPanel.LEFT_ALIGNMENT
                 bodyWrapper?.add(editorPane)
+                lastBatchPanes.add(TrackedPane(editorPane, htmlBody))
             }
 
             bodyWrapper?.revalidate()
@@ -142,6 +158,8 @@ class ResponseMessagePanel(
                 wrapper.add(thinkingPane)
             }
 
+            lastBatchPanes.clear()
+
             if (project != null) {
                 // Use segment-based rendering with CodeBlockPanel for code blocks
                 val segments = CodeBlockPanel.parseSegments(initialMessageText)
@@ -149,13 +167,14 @@ class ResponseMessagePanel(
                     when (segment) {
                         is CodeBlockPanel.ResponseSegment.Text -> {
                             val html = renderMarkdown(segment.content)
-                            val textPane = createTextPane(html)
+                            val textPane = createTextPane(html, COMPACT_FONT_SIZE)
                             // Let the DynamicHeightTextPane compute its own height.
                             // Don't set maximumSize here — the stale preferredSize.height
                             // captured before layout causes clipping. The text pane's
                             // own getMaximumSize() already returns the correct height.
                             textPane.alignmentX = JPanel.LEFT_ALIGNMENT
                             wrapper.add(textPane)
+                            lastBatchPanes.add(TrackedPane(textPane, html))
                         }
                         is CodeBlockPanel.ResponseSegment.Code -> {
                             val codePanel = CodeBlockPanel(project, segment.content, segment.language)
@@ -166,13 +185,16 @@ class ResponseMessagePanel(
                 }
             } else {
                 // Fallback: pure HTML rendering (no editor)
+                val htmlBody = renderMarkdown(initialMessageText)
                 val editorPane = HtmlPaneFactory.createHtmlPane(
-                    htmlBody = renderMarkdown(initialMessageText),
+                    htmlBody = htmlBody,
                     bgColor = background,
-                    fgColor = JBColor(0x333333, 0xDDDDDD)
+                    fgColor = JBColor(0x333333, 0xDDDDDD),
+                    fontSize = COMPACT_FONT_SIZE
                 )
                 editorPane.alignmentX = JPanel.LEFT_ALIGNMENT
                 wrapper.add(editorPane)
+                lastBatchPanes.add(TrackedPane(editorPane, htmlBody))
             }
 
             setBodyContent(wrapper)
@@ -186,13 +208,34 @@ class ResponseMessagePanel(
         }
     }
 
-    private fun createTextPane(htmlContent: String): JTextPane {
+    private fun createTextPane(htmlContent: String, fontSize: String = NORMAL_FONT_SIZE): JTextPane {
         val pane = HtmlPaneFactory.createHtmlPane(
             htmlBody = htmlContent,
             bgColor = background,
-            fgColor = JBColor(0x333333, 0xDDDDDD)
+            fgColor = JBColor(0x333333, 0xDDDDDD),
+            fontSize = fontSize
         )
         return pane
+    }
+
+    /**
+     * Promote the most recent batch of text panes from compact (11px) to normal (12px) font.
+     * Called when the agent loop ends so the final report is displayed at normal size
+     * while intermediate assistant messages remain compact.
+     */
+    fun promoteLastMessageToNormal() {
+        SwingUtilities.invokeLater {
+            for (tracked in lastBatchPanes) {
+                val pane = tracked.pane
+                val htmlBody = tracked.htmlBody
+                pane.text = "<html><body style='font-family: sans-serif; font-size: $NORMAL_FONT_SIZE; word-wrap: break-word;'>" +
+                        htmlBody + "</body></html>"
+                pane.revalidate()
+            }
+            lastBatchPanes.clear()
+            bodyWrapper?.revalidate()
+            bodyWrapper?.repaint()
+        }
     }
 
     override fun getPlainText(): String = allMessageText.toString()

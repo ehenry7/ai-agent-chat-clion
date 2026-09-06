@@ -1507,7 +1507,9 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                     panel.finalize()
                     activeStreamingPanel = null
                 }
-                // Collapse tool calls in the last assistant bubble when the loop ends
+                // Promote the last assistant message batch to normal font size,
+                // then collapse tool calls in the last assistant bubble when the loop ends
+                activeAssistantPanel?.promoteLastMessageToNormal()
                 activeAssistantPanel?.collapseToolCalls()
                 activeAssistantPanel = null
                 activeConversationId = null
