@@ -76,10 +76,14 @@ class EnhancedInputPanel(
         isContentAreaFilled = true
         isBorderPainted = true
         isFocusPainted = false
-        margin = JBUI.insets(4, 8)
-        font = font.deriveFont(Font.PLAIN, 12f)
+        horizontalTextPosition = SwingConstants.LEADING
+        margin = JBUI.insets(6, 12)
+        font = font.deriveFont(Font.PLAIN, 14f)
         cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
-        preferredSize = Dimension(160, 28)
+        // No fixed width — let it size to fit the full model name
+        // Only set a minimum so it doesn't collapse when text is short
+        minimumSize = Dimension(120, 32)
+        preferredSize = Dimension(200, 32)
     }
 
     /** Data for the model tree popup: provider -> models with timing. */
@@ -407,10 +411,18 @@ class EnhancedInputPanel(
     fun updateModelTree(entries: List<ModelTreeEntry>) {
         SwingUtilities.invokeLater {
             modelTreeData = entries
-            // Update button text to show current model
+            // Update button text to show full current model name with dropdown arrow
             val current = currentModel()
             val match = entries.find { it.rawModelId == current }
-            modelSelector.text = match?.let { "${it.providerName}/${it.modelName}" } ?: current.take(20)
+            val displayName = match?.let { "${it.providerName}/${it.modelName}" } ?: current
+            modelSelector.text = "$displayName  \u25BE"
+            // Resize button to fit the full text
+            val fm = modelSelector.getFontMetrics(modelSelector.font)
+            val textWidth = fm.stringWidth(modelSelector.text)
+            val newWidth = (textWidth + 40).coerceAtLeast(120)  // 40px for margins + padding
+            modelSelector.preferredSize = Dimension(newWidth, 32)
+            modelSelector.revalidate()
+            modelSelector.repaint()
         }
     }
 
