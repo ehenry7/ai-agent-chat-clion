@@ -97,7 +97,14 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                 if (provider.apiKey.isNotBlank()) {
                     settings.setApiKey(provider.apiKey)
                 }
-                DebugLog.info("ChatToolWindow", "Model switched to '$newModel', provider='${provider.name}', baseUrl='${provider.baseUrl}'")
+                // Update maxContextTokens from the selected model's spec
+                val modelSpec = provider.models.find { it.id == newModel }
+                if (modelSpec != null && modelSpec.maxContextTokens > 0) {
+                    settings.state.maxContextTokens = modelSpec.maxContextTokens
+                    usageTracker.updateMaxContextTokens(modelSpec.maxContextTokens.coerceAtLeast(1024))
+                    usageCounterPanel.updateMaxContextTokens(modelSpec.maxContextTokens.coerceAtLeast(1024))
+                }
+                DebugLog.info("ChatToolWindow", "Model switched to '$newModel', provider='${provider.name}', baseUrl='${provider.baseUrl}', maxContextTokens=${settings.state.maxContextTokens}")
             }
             conversationTabPanel.updateModelStatus(newModel)
         }

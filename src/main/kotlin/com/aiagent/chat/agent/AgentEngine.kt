@@ -649,17 +649,23 @@ class AgentEngine(
             // --- Proactive compaction: check token estimate before API call ---
             if (contextCompactor != null) {
                 val estimatedTokens = contextCompactor.estimateTokens(messages)
-                val proactiveThreshold = (contextCompactor.maxContextTokens * PROACTIVE_COMPACTION_RATIO).toInt()
+                val proactiveThreshold = (contextCompactor.effectiveMaxContextTokens * PROACTIVE_COMPACTION_RATIO).toInt()
                 if (estimatedTokens >= proactiveThreshold && contextCompactor.needsCompaction(messages)) {
-                    DebugLog.info("AgentEngine", "Proactive compaction: estimated $estimatedTokens tokens >= $proactiveThreshold threshold, compacting before API call")
-                    onDelta(AgentDelta.Status("[proactive context compaction: ~${estimatedTokens} tokens estimated]"))
-                    val sizeBefore = messages.size
-                    val compacted = contextCompactor.compact(messages)
-                    if (compacted.size < sizeBefore) {
-                        messages.clear()
-                        messages.addAll(compacted)
-                        onDelta(AgentDelta.CompactionNotice("Proactive compaction", sizeBefore, compacted.size))
-                        DebugLog.info("AgentEngine", "Proactive compaction successful: $sizeBefore -> ${compacted.size} messages")
+                    // Don't attempt compaction if there are too few messages to compact
+                    // (compact() is a no-op when messages.size <= PROTECTED_RECENT + 1)
+                    if (messages.size <= 9) {
+                        DebugLog.info("AgentEngine", "Proactive compaction skipped: only ${messages.size} messages (too few to compact), estimated $estimatedTokens tokens")
+                    } else {
+                        DebugLog.info("AgentEngine", "Proactive compaction: estimated $estimatedTokens tokens >= $proactiveThreshold threshold, compacting before API call")
+                        onDelta(AgentDelta.Status("[proactive context compaction: ~${estimatedTokens} tokens estimated]"))
+                        val sizeBefore = messages.size
+                        val compacted = contextCompactor.compact(messages)
+                        if (compacted.size < sizeBefore) {
+                            messages.clear()
+                            messages.addAll(compacted)
+                            onDelta(AgentDelta.CompactionNotice("Proactive compaction", sizeBefore, compacted.size))
+                            DebugLog.info("AgentEngine", "Proactive compaction successful: $sizeBefore -> ${compacted.size} messages")
+                        }
                     }
                 }
             }
@@ -677,6 +683,16 @@ class AgentEngine(
                 if (compactionAttempts > MAX_COMPACTION_RETRIES || contextCompactor == null) {
                     DebugLog.warn("AgentEngine", "Context limit exceeded, no more compaction retries (attempts=$compactionAttempts, compactor=${contextCompactor != null})")
                     throw e
+                }
+                // If there are too few messages, compaction can't help — fail fast with a clear message
+                if (messages.size <= 9) {
+                    DebugLog.warn("AgentEngine", "Context limit exceeded with only ${messages.size} messages — compaction cannot help (system prompt + tool definitions may exceed model context window)")
+                    onDelta(AgentDelta.Status("[context limit exceeded: system prompt + tools may exceed model context window (${messages.size} messages, cannot compact further)]"))
+                    throw ContextLimitException(e.statusCode,
+                        "Context limit exceeded with only ${messages.size} messages. " +
+                        "The system prompt + tool definitions (${tools.size} tools) may exceed the model's context window. " +
+                        "Try switching to a model with a larger context window, reducing the number of enabled tools, " +
+                        "or increasing maxContextTokens in settings. Original error: ${e.message}")
                 }
                 DebugLog.info("AgentEngine", "Context limit exceeded, attempting compaction (attempt $compactionAttempts/$MAX_COMPACTION_RETRIES)")
                 onDelta(AgentDelta.Status("[context limit exceeded, compacting conversation...]"))

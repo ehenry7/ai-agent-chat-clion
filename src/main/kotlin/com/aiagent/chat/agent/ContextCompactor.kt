@@ -33,6 +33,8 @@ class ContextCompactor(
     private val client: ApiClient,
     val maxContextTokens: Int = 32768
 ) {
+    /** Effective max context tokens, guarded against zero/negative values. */
+    val effectiveMaxContextTokens: Int get() = maxContextTokens.coerceAtLeast(1024)
     companion object {
         /** Number of recent messages to keep unsummarized. */
         const val PROTECTED_RECENT = 8
@@ -51,7 +53,7 @@ class ContextCompactor(
     }
 
     /** Dynamic compaction threshold based on maxContextTokens. Scales with context window. */
-    val compactionThreshold: Int get() = (maxContextTokens / 2000).coerceIn(10, 100)
+    val compactionThreshold: Int get() = (effectiveMaxContextTokens / 2000).coerceIn(10, 100)
 
     /** Rolling summary: stores the last compaction summary to avoid re-summarizing everything. */
     private var lastSummary: String? = null
@@ -87,7 +89,7 @@ class ContextCompactor(
         if (conversationMessages >= compactionThreshold) return true
         // Also check token estimate for proactive compaction
         val estimatedTokens = estimateTokens(messages)
-        val threshold = (maxContextTokens * PROACTIVE_THRESHOLD_RATIO).toInt()
+        val threshold = (effectiveMaxContextTokens * PROACTIVE_THRESHOLD_RATIO).toInt()
         return estimatedTokens >= threshold
     }
 
@@ -97,11 +99,11 @@ class ContextCompactor(
     fun getCompactionDiagnostics(messages: List<ChatMessage>): String {
         val conversationMessages = messages.size - 1
         val estimatedTokens = estimateTokens(messages)
-        val threshold = (maxContextTokens * PROACTIVE_THRESHOLD_RATIO).toInt()
-        val pct = if (maxContextTokens > 0) (estimatedTokens * 100 / maxContextTokens) else 0
+        val threshold = (effectiveMaxContextTokens * PROACTIVE_THRESHOLD_RATIO).toInt()
+        val pct = if (effectiveMaxContextTokens > 0) (estimatedTokens * 100 / effectiveMaxContextTokens) else 0
         return buildString {
             appendLine("Message count: $conversationMessages (threshold: $compactionThreshold)")
-            appendLine("Estimated tokens: $estimatedTokens / $maxContextTokens ($pct%)")
+            appendLine("Estimated tokens: $estimatedTokens / $effectiveMaxContextTokens ($pct%)")
             appendLine("Proactive threshold: $threshold tokens (${"${(PROACTIVE_THRESHOLD_RATIO * 100).toInt()}%"})")
             appendLine("Compaction needed: ${needsCompaction(messages)}")
             if (lastSummary != null) {
@@ -132,7 +134,7 @@ class ContextCompactor(
         // Recent messages to keep unsummarized
         val recent = messages.subList(messages.size - PROTECTED_RECENT, messages.size)
 
-        DebugLog.info("ContextCompactor", "Compacting ${toSummarize.size} messages, keeping ${recent.size} recent (threshold=$compactionThreshold, maxTokens=$maxContextTokens)")
+        DebugLog.info("ContextCompactor", "Compacting ${toSummarize.size} messages, keeping ${recent.size} recent (threshold=$compactionThreshold, maxTokens=$effectiveMaxContextTokens)")
 
         val summary = try {
             summarizeSegment(toSummarize)
