@@ -1,6 +1,7 @@
 package com.aiagent.chat.tools
 
 import com.aiagent.chat.model.ProviderConfig
+import com.aiagent.chat.model.TodoItem
 import com.aiagent.chat.util.IdeaLogReader
 import com.intellij.openapi.vfs.LocalFileSystem
 import java.io.File
@@ -30,6 +31,7 @@ data class SlashCommandContext(
     val sessionCount: Int,
     val activeMessageCount: Int,
     val todoCount: Int,
+    val todoItems: List<TodoItem>,
     val hasPlan: Boolean,
     val planSummary: String,
     // Usage
@@ -72,7 +74,8 @@ object SlashCommands {
         "new" to Command("new", "Start new session"),
         "logs" to Command("logs", "Show recent IDE log entries"),
         "health" to Command("health", "Show runtime health diagnostics"),
-        "plan" to Command("plan", "Display the current plan and its status")
+        "plan" to Command("plan", "Display the current plan and its status"),
+        "todo" to Command("todo", "Display the current todo list and status")
     )
 
     fun isLocalCommand(text: String): Boolean {
@@ -95,6 +98,7 @@ object SlashCommands {
             "logs" -> SlashCommandResult(formatLogs(parts.drop(1)))
             "health" -> SlashCommandResult(formatHealth())
             "plan" -> SlashCommandResult(formatPlan(context))
+            "todo" -> SlashCommandResult(formatTodo(context))
             else -> null
         }
     }
@@ -234,6 +238,34 @@ object SlashCommands {
             lines.add("```")
         } else {
             lines.add("_Plan exists but has no steps._")
+        }
+
+        return lines.joinToString("\n")
+    }
+
+    fun formatTodo(context: SlashCommandContext): String {
+        if (context.todoItems.isEmpty()) {
+            return "## Todo List\n\n_No todos. The agent will create a todo list when working on multi-step tasks._"
+        }
+
+        val lines = mutableListOf<String>()
+        lines.add("## Todo List")
+        lines.add("")
+
+        val pending = context.todoItems.count { it.status == "pending" }
+        val inProgress = context.todoItems.count { it.status == "in_progress" }
+        val completed = context.todoItems.count { it.status == "completed" }
+        val total = context.todoItems.size
+        lines.add("**Progress:** $completed/$total completed, $inProgress in progress, $pending pending")
+        lines.add("")
+
+        for ((index, item) in context.todoItems.withIndex()) {
+            val box = when (item.status) {
+                "completed" -> "[x]"
+                "in_progress" -> "[-]"
+                else -> "[ ]"
+            }
+            lines.add("$box ${index + 1}. ${item.content}")
         }
 
         return lines.joinToString("\n")

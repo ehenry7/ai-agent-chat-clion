@@ -1206,6 +1206,7 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                 sessionCount = conversationTabPanel.getAllConversations().size,
                 activeMessageCount = activeConv?.history?.size ?: 0,
                 todoCount = todoList.size,
+                todoItems = todoList,
                 hasPlan = plan != null,
                 planSummary = plan?.toSystemPromptSection()?.trim() ?: "",
                 currentSessionTokens = usageSummary.currentSessionTokens,
