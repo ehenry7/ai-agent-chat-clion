@@ -66,8 +66,8 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
 
     private val todoPlanTabbedPane = javax.swing.JTabbedPane().apply {
         isOpaque = false
-        addTab("Todo", todoListPanel)
         addTab("Plan", planPanel)
+        addTab("Todo", todoListPanel)
     }
 
     private val enhancedInputPanel = EnhancedInputPanel(
