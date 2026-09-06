@@ -51,7 +51,11 @@ class ResponseMessagePanel(
             if (toolCallsSection == null) {
                 toolCallsSection = ToolCallsSection()
                 toolCallsSection!!.alignmentX = JPanel.LEFT_ALIGNMENT
-                bodyWrapper?.add(toolCallsSection)
+                // Insert at the top of the wrapper (after thinking pane if present,
+                // but before all text/code content) so tool calls appear at the
+                // very top of the assistant bubble.
+                val insertIndex = if (thinkingText.isNotBlank()) 1 else 0
+                bodyWrapper?.add(toolCallsSection, insertIndex)
             }
             toolCallsSection!!.addToolCall(name, output, status, autoExpand = autoExpand)
             bodyWrapper?.revalidate()
