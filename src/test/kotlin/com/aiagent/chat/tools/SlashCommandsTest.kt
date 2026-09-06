@@ -3,6 +3,7 @@ package com.aiagent.chat.tools
 import com.aiagent.chat.model.AuthHeaderType
 import com.aiagent.chat.model.ModelInfo
 import com.aiagent.chat.model.ProviderConfig
+import com.aiagent.chat.model.TodoItem
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -25,6 +26,7 @@ class SlashCommandsTest {
         sessionCount: Int = 1,
         activeMessageCount: Int = 0,
         todoCount: Int = 0,
+        todoItems: List<TodoItem> = emptyList(),
         hasPlan: Boolean = false,
         planSummary: String = "",
         currentSessionTokens: Int = 0,
@@ -49,6 +51,7 @@ class SlashCommandsTest {
         sessionCount = sessionCount,
         activeMessageCount = activeMessageCount,
         todoCount = todoCount,
+        todoItems = todoItems,
         hasPlan = hasPlan,
         planSummary = planSummary,
         currentSessionTokens = currentSessionTokens,
@@ -105,7 +108,9 @@ class SlashCommandsTest {
     @Test
     fun `processCommand returns non-null for each built-in command`() {
         val ctx = makeContext()
-        for (cmd in listOf("/config", "/help", "/memory", "/status", "/init", "/clear", "/new")) {
+        // /logs is excluded because it requires IDE log infrastructure (IdeaLogReader)
+        // that is not available in unit tests.
+        for (cmd in listOf("/config", "/help", "/memory", "/status", "/init", "/clear", "/new", "/health", "/plan", "/todo")) {
             val result = SlashCommands.processCommand(cmd, ctx)
             assertNotNull("Command $cmd should return a result", result)
             assertTrue("Command $cmd should have non-empty message", result!!.message.isNotEmpty())
@@ -214,12 +219,12 @@ class SlashCommandsTest {
     // --- /help tests ---
 
     @Test
-    fun `help command lists all 7 commands`() {
+    fun `help command lists all 11 commands`() {
         val ctx = makeContext()
         val result = SlashCommands.processCommand("/help", ctx)
         assertNotNull(result)
         val msg = result!!.message
-        for (cmd in listOf("/config", "/help", "/memory", "/status", "/init", "/clear", "/new")) {
+        for (cmd in listOf("/config", "/help", "/memory", "/status", "/init", "/clear", "/new", "/logs", "/health", "/plan", "/todo")) {
             assertTrue("Help should list $cmd", msg.contains(cmd))
         }
     }
@@ -442,8 +447,8 @@ class SlashCommandsTest {
     // --- BUILT_IN map tests ---
 
     @Test
-    fun `BUILT_IN contains exactly 7 commands`() {
-        assertEquals(7, SlashCommands.BUILT_IN.size)
+    fun `BUILT_IN contains exactly 11 commands`() {
+        assertEquals(11, SlashCommands.BUILT_IN.size)
     }
 
     @Test
@@ -456,6 +461,10 @@ class SlashCommandsTest {
         assertTrue(names.contains("init"))
         assertTrue(names.contains("clear"))
         assertTrue(names.contains("new"))
+        assertTrue(names.contains("logs"))
+        assertTrue(names.contains("health"))
+        assertTrue(names.contains("plan"))
+        assertTrue(names.contains("todo"))
     }
 
     @Test
