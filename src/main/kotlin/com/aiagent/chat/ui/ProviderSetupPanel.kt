@@ -19,6 +19,8 @@ import java.awt.BorderLayout
 import java.awt.CardLayout
 import java.awt.Dimension
 import java.awt.FlowLayout
+import java.awt.GridBagLayout
+import java.awt.GridBagConstraints
 import java.awt.GridLayout
 import javax.swing.*
 import javax.swing.table.DefaultTableModel
@@ -156,8 +158,18 @@ class ProviderSetupPanel(
 
     // --- Provider edit popup fields ---
     private val popupNameField = JBTextField()
-    private val popupUrlField = JBTextField()
+    private val popupUrlCombo = JComboBox<String>().apply {
+        isEditable = true
+        addItem("http://100.102.112.77")
+        addItem("http://models.ascend.huawei.com/v1")
+        addItem("https://aigateway.csitool.rnd.huawei.com/v1")
+        addItem("http://techdev.hicomputing.huawei.com:18000/v1")
+    }
     private val popupKeyField = JPasswordField()
+    private val popupErrorLabel = JBLabel(" ").apply {
+        font = font.deriveFont(java.awt.Font.PLAIN, 11f)
+        foreground = JBColor(0xCC0000, 0xFF6666)
+    }
 
     init {
         border = JBUI.Borders.empty(8)
@@ -513,70 +525,137 @@ class ProviderSetupPanel(
 
     private fun showAddProviderPopup() {
         popupNameField.text = ""
-        popupUrlField.text = ""
+        popupUrlCombo.selectedIndex = 0
+        popupUrlCombo.editor.item = ""
         popupKeyField.text = ""
+        popupErrorLabel.text = " "
 
-        val panel = JPanel(GridLayout(0, 1, 4, 4))
-        panel.add(JBLabel("Provider Name:"))
-        panel.add(popupNameField)
-        panel.add(JBLabel("Base URL:"))
-        panel.add(popupUrlField)
-        panel.add(JBLabel("API Key:"))
-        panel.add(popupKeyField)
+        val panel = JPanel(GridBagLayout())
+        val gbc = GridBagConstraints().apply {
+            fill = GridBagConstraints.HORIZONTAL
+            insets = JBUI.insets(2, 2, 2, 2)
+            weightx = 1.0
+        }
 
-        val result = JOptionPane.showConfirmDialog(
-            this, panel, "Add Provider",
-            JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE
-        )
+        gbc.gridx = 0; gbc.gridy = 0; gbc.weightx = 0.0
+        panel.add(JBLabel("Provider Name:"), gbc)
+        gbc.gridx = 1; gbc.gridy = 0; gbc.weightx = 1.0
+        panel.add(popupNameField, gbc)
 
-        if (result == JOptionPane.OK_OPTION) {
-            val name = popupNameField.text.trim()
-            val url = popupUrlField.text.trim()
-            val key = String(popupKeyField.password).trim()
-            if (name.isNotEmpty() && url.isNotEmpty()) {
-                val id = "prov_${System.currentTimeMillis()}"
-                val provider = ProviderConfig(
-                    id = id, name = name, baseUrl = url, apiKey = key,
-                    authHeaderType = AuthHeaderType.BEARER, enabled = true,
-                    isDefault = settings.getProviders().isEmpty()
-                )
-                settings.addProvider(provider)
-                refreshProviderTable()
+        gbc.gridx = 0; gbc.gridy = 1; gbc.weightx = 0.0
+        panel.add(JBLabel("Base URL:"), gbc)
+        gbc.gridx = 1; gbc.gridy = 1; gbc.weightx = 1.0
+        panel.add(popupUrlCombo, gbc)
 
-                // Select the new provider
-                for (i in 0 until providerTableModel.rowCount) {
-                    if (providerTableModel.getValueAt(i, 1) == name) {
-                        providerTable.setRowSelectionInterval(i, i)
-                        break
-                    }
-                }
+        gbc.gridx = 0; gbc.gridy = 2; gbc.weightx = 0.0
+        panel.add(JBLabel("API Key:"), gbc)
+        gbc.gridx = 1; gbc.gridy = 2; gbc.weightx = 1.0
+        panel.add(popupKeyField, gbc)
 
-                // Requirement 10: auto-start refresh models on OK
-                setStatus("Auto-syncing models for '$name'...")
-                scope.launch {
-                    try {
-                        // First test connection to auto-detect auth type
-                        val testResult = onTestConnection?.invoke(provider)
-                        val providerWithAuth = if (testResult?.success == true && testResult.authType != null) {
-                            provider.copy(authHeaderType = testResult.authType)
-                        } else {
-                            provider
-                        }
-                        val synced = onSyncModels?.invoke(providerWithAuth)
-                        SwingUtilities.invokeLater {
-                            if (synced != null) {
-                                onModelsSynced(synced)
-                                setStatus("Models synced: ${synced.models.size} found")
-                            } else {
-                                setStatus("Model sync failed")
-                            }
-                        }
-                    } catch (e: Exception) {
-                        SwingUtilities.invokeLater { setStatus("Sync error: ${e.message}") }
-                    }
-                }
+        gbc.gridx = 0; gbc.gridy = 3; gbc.gridwidth = 2; gbc.weightx = 1.0
+        panel.add(popupErrorLabel, gbc)
+
+        // Auto-fill API key when URL changes
+        val autoFillKey = {
+            val url = (popupUrlCombo.editor.item as? String ?: popupUrlCombo.selectedItem as? String ?: "").trim()
+            if (url == "http://100.102.112.77") {
+                popupKeyField.text = "sk-1234"
             }
         }
+        popupUrlCombo.addActionListener {
+            if (popupUrlCombo.selectedItem != null) autoFillKey()
+        }
+        popupUrlCombo.editor.item = "http://100.102.112.77"
+        autoFillKey()
+
+        val parentFrame = SwingUtilities.getWindowAncestor(this) as? JFrame
+
+        val dialog = JDialog(parentFrame, "Add Provider", true).apply {
+            isResizable = false
+            defaultCloseOperation = JDialog.DISPOSE_ON_CLOSE
+            val content = JPanel(BorderLayout(8, 8)).apply {
+                border = JBUI.Borders.empty(16)
+                background = JBColor.PanelBackground
+            }
+            content.add(panel, BorderLayout.CENTER)
+
+            val btnPanel = JPanel(FlowLayout(FlowLayout.RIGHT, 4, 0)).apply { isOpaque = false }
+            val cancelBtn = JButton("Cancel").apply {
+                addActionListener { dispose() }
+            }
+            val okBtn = JButton("OK").apply {
+                addActionListener {
+                    val name = popupNameField.text.trim()
+                    val url = (popupUrlCombo.editor.item as? String ?: popupUrlCombo.selectedItem as? String ?: "").trim()
+                    val key = String(popupKeyField.password).trim()
+
+                    if (name.isEmpty()) {
+                        popupErrorLabel.text = "Provider name is required."
+                        return@addActionListener
+                    }
+                    if (url.isEmpty()) {
+                        popupErrorLabel.text = "Base URL is required."
+                        return@addActionListener
+                    }
+                    if (key.isEmpty()) {
+                        popupErrorLabel.text = "API key is required for this provider."
+                        return@addActionListener
+                    }
+
+                    // Validation passed — add the provider
+                    val id = "prov_${System.currentTimeMillis()}"
+                    val provider = ProviderConfig(
+                        id = id, name = name, baseUrl = url, apiKey = key,
+                        authHeaderType = AuthHeaderType.BEARER, enabled = true,
+                        isDefault = settings.getProviders().isEmpty()
+                    )
+                    settings.addProvider(provider)
+                    refreshProviderTable()
+
+                    // Select the new provider
+                    for (i in 0 until providerTableModel.rowCount) {
+                        if (providerTableModel.getValueAt(i, 1) == name) {
+                            providerTable.setRowSelectionInterval(i, i)
+                            break
+                        }
+                    }
+
+                    // Auto-start refresh models on OK
+                    setStatus("Auto-syncing models for '$name'...")
+                    scope.launch {
+                        try {
+                            val testResult = onTestConnection?.invoke(provider)
+                            val providerWithAuth = if (testResult?.success == true && testResult.authType != null) {
+                                provider.copy(authHeaderType = testResult.authType)
+                            } else {
+                                provider
+                            }
+                            val synced = onSyncModels?.invoke(providerWithAuth)
+                            SwingUtilities.invokeLater {
+                                if (synced != null) {
+                                    onModelsSynced(synced)
+                                    setStatus("Models synced: ${synced.models.size} found")
+                                } else {
+                                    setStatus("Model sync failed")
+                                }
+                            }
+                        } catch (e: Exception) {
+                            SwingUtilities.invokeLater { setStatus("Sync error: ${e.message}") }
+                        }
+                    }
+
+                    dispose()
+                }
+            }
+            btnPanel.add(cancelBtn)
+            btnPanel.add(okBtn)
+            content.add(btnPanel, BorderLayout.SOUTH)
+            contentPane = content
+            pack()
+            setLocationRelativeTo(parentFrame)
+            rootPane.defaultButton = okBtn
+        }
+        dialog.isVisible = true
     }
 
     private fun removeSelectedProvider() {
