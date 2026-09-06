@@ -118,6 +118,7 @@ class ToolCallsSection : JBPanel<ToolCallsSection>(BorderLayout()) {
         if (toolCallCards.isNotEmpty()) {
             isSlidingWindow = false
             setExpanded(false)
+            updateTitle()
             revalidate()
             repaint()
             parent?.revalidate()
@@ -146,6 +147,7 @@ class ToolCallsSection : JBPanel<ToolCallsSection>(BorderLayout()) {
             // Was collapsed → expand showing all
             isSlidingWindow = false
             setExpanded(true)
+            updateTitle()
         } else if (isSlidingWindow) {
             // Was in sliding-window mode → switch to show all
             isSlidingWindow = false
@@ -154,6 +156,7 @@ class ToolCallsSection : JBPanel<ToolCallsSection>(BorderLayout()) {
         } else {
             // Was showing all → collapse
             setExpanded(false)
+            updateTitle()
         }
         revalidate()
         repaint()
