@@ -100,13 +100,23 @@ class PlatformToolHandler(
     fun readFile(relPath: String): String {
         val file = resolveContainedFile(relPath)
         if (!file.exists()) return "Error: File not found: $relPath"
-        return file.readText(StandardCharsets.UTF_8).take(12000)
+        if (file.isDirectory) return "Error: Path is a directory, not a file: $relPath"
+        return try {
+            file.readText(StandardCharsets.UTF_8).take(12000)
+        } catch (e: Exception) {
+            "Error reading file $relPath: ${e.message ?: e::class.simpleName}"
+        }
     }
 
     fun readFileLines(relPath: String, startLine: Int, endLine: Int): String {
         val file = resolveContainedFile(relPath)
         if (!file.exists()) return "Error: File not found: $relPath"
-        val lines = file.readLines(StandardCharsets.UTF_8)
+        if (file.isDirectory) return "Error: Path is a directory, not a file: $relPath"
+        val lines = try {
+            file.readLines(StandardCharsets.UTF_8)
+        } catch (e: Exception) {
+            return "Error reading file $relPath: ${e.message ?: e::class.simpleName}"
+        }
         val s = (startLine - 1).coerceAtLeast(0)
         val e = endLine.coerceAtMost(lines.size)
         if (s >= e) return "Error: startLine must be <= endLine"
@@ -115,43 +125,59 @@ class PlatformToolHandler(
 
     fun writeFile(relPath: String, content: String): String {
         var result = ""
-        ApplicationManager.getApplication().invokeAndWait {
-            WriteCommandAction.runWriteCommandAction(project) {
-                val file = resolveContainedFile(relPath)
-                // Push undo snapshot if file already exists
-                if (file.exists()) {
-                    undoStack.push(relPath, file.readText(StandardCharsets.UTF_8))
+        try {
+            ApplicationManager.getApplication().invokeAndWait {
+                WriteCommandAction.runWriteCommandAction(project) {
+                    val file = resolveContainedFile(relPath)
+                    if (file.isDirectory) {
+                        result = "Error: Cannot write to a directory: $relPath"
+                        return@runWriteCommandAction
+                    }
+                    // Push undo snapshot if file already exists
+                    if (file.exists()) {
+                        undoStack.push(relPath, file.readText(StandardCharsets.UTF_8))
+                    }
+                    file.parentFile.mkdirs()
+                    file.writeText(content, StandardCharsets.UTF_8)
+                    VfsUtil.markDirtyAndRefresh(false, true, true, VfsUtil.findFileByIoFile(file, true))
+                    result = "Wrote ${content.toByteArray().size} bytes to $relPath"
                 }
-                file.parentFile.mkdirs()
-                file.writeText(content, StandardCharsets.UTF_8)
-                VfsUtil.markDirtyAndRefresh(false, true, true, VfsUtil.findFileByIoFile(file, true))
-                result = "Wrote ${content.toByteArray().size} bytes to $relPath"
             }
+        } catch (e: Exception) {
+            result = "Error writing file $relPath: ${e.message ?: e::class.simpleName}"
         }
         return result
     }
 
     fun editFile(relPath: String, search: String, replace: String, replaceAll: Boolean = false): String {
         var result = ""
-        ApplicationManager.getApplication().invokeAndWait {
-            WriteCommandAction.runWriteCommandAction(project) {
-                val file = resolveContainedFile(relPath)
-                if (!file.exists()) {
-                    result = "Error: File not found: $relPath"
-                    return@runWriteCommandAction
+        try {
+            ApplicationManager.getApplication().invokeAndWait {
+                WriteCommandAction.runWriteCommandAction(project) {
+                    val file = resolveContainedFile(relPath)
+                    if (!file.exists()) {
+                        result = "Error: File not found: $relPath"
+                        return@runWriteCommandAction
+                    }
+                    if (file.isDirectory) {
+                        result = "Error: Path is a directory, not a file: $relPath"
+                        return@runWriteCommandAction
+                    }
+                    val raw = file.readText(StandardCharsets.UTF_8)
+                    if (!raw.contains(search)) {
+                        result = "Error: Search string not found in $relPath"
+                        return@runWriteCommandAction
+                    }
+                    // Push undo snapshot before editing
+                    undoStack.push(relPath, raw)
+                    val updated = if (replaceAll) raw.replace(search, replace) else raw.replaceFirst(search, replace)
+                    file.writeText(updated, StandardCharsets.UTF_8)
+                    VfsUtil.markDirtyAndRefresh(false, true, true, VfsUtil.findFileByIoFile(file, true))
+                    result = "Edited $relPath successfully"
                 }
-                val raw = file.readText(StandardCharsets.UTF_8)
-                if (!raw.contains(search)) {
-                    result = "Error: Search string not found in $relPath"
-                    return@runWriteCommandAction
-                }
-                // Push undo snapshot before editing
-                undoStack.push(relPath, raw)
-                val updated = if (replaceAll) raw.replace(search, replace) else raw.replaceFirst(search, replace)
-                file.writeText(updated, StandardCharsets.UTF_8)
-                VfsUtil.markDirtyAndRefresh(false, true, true, VfsUtil.findFileByIoFile(file, true))
-                result = "Edited $relPath successfully"
             }
+        } catch (e: Exception) {
+            result = "Error editing file $relPath: ${e.message ?: e::class.simpleName}"
         }
         return result
     }
@@ -536,13 +562,19 @@ class PlatformToolHandler(
                 val path = args["path"]?.jsonPrimitive?.content ?: ""
                 val diff = args["diff"]?.jsonPrimitive?.content ?: ""
                 val file = resolveContainedFile(path)
-                val orig = file.readText(StandardCharsets.UTF_8)
-                val res = DiffEngine.applyDiff(orig, diff)
-                if (res.success && res.content != null) {
-                    writeFile(path, res.content)
-                    "Applied diff successfully to $path."
+                if (!file.exists()) {
+                    "apply_diff failed: File not found: $path"
+                } else if (file.isDirectory) {
+                    "apply_diff failed: Path is a directory, not a file: $path"
                 } else {
-                    "apply_diff failed: ${res.error}"
+                    val orig = file.readText(StandardCharsets.UTF_8)
+                    val res = DiffEngine.applyDiff(orig, diff)
+                    if (res.success && res.content != null) {
+                        writeFile(path, res.content)
+                        "Applied diff successfully to $path."
+                    } else {
+                        "apply_diff failed: ${res.error}"
+                    }
                 }
             }
             "apply_patch" -> {
@@ -557,10 +589,14 @@ class PlatformToolHandler(
                         }
                         is PatchEngine.Hunk.UpdateFile -> {
                             val file = resolveContainedFile(hunk.path)
-                            val orig = if (file.exists()) file.readText(StandardCharsets.UTF_8) else ""
-                            val updated = PatchEngine.applyChunksToContent(orig, hunk.chunks)
-                            writeFile(hunk.movePath ?: hunk.path, updated)
-                            if (hunk.movePath != null && file.exists()) file.delete()
+                            if (file.isDirectory) {
+                                DebugLog.warn("PlatformTools", "apply_patch: skipping directory path: ${hunk.path}")
+                            } else {
+                                val orig = if (file.exists()) file.readText(StandardCharsets.UTF_8) else ""
+                                val updated = PatchEngine.applyChunksToContent(orig, hunk.chunks)
+                                writeFile(hunk.movePath ?: hunk.path, updated)
+                                if (hunk.movePath != null && file.exists()) file.delete()
+                            }
                         }
                     }
                 }
