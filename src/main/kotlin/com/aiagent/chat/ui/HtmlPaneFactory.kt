@@ -169,9 +169,41 @@ class DynamicHeightTextPane : JTextPane() {
             com.aiagent.chat.debug.DebugLog.info("DynamicHeightTextPane", "setBounds($x,$y,$width,$height): width changed from $measuredWidth, oldHeight=$oldHeight, isEDT=${SwingUtilities.isEventDispatchThread()}")
             reMeasure(width)
             if (measuredHeight != oldHeight) {
-                SwingUtilities.invokeLater { revalidate() }
+                // When height changes after re-measurement, the enclosing scroll pane
+                // may need to re-scroll to keep newly added content visible. This fixes
+                // the issue where a new message bubble appears with a very narrow height
+                // because the initial preferred size was based on a fallback width, and
+                // the correct height is only computed after the first layout pass
+                // allocates the real width.
+                val sp = findEnclosingScrollPane()
+                val wasAtBottom = if (sp != null) {
+                    val bar = sp.verticalScrollBar
+                    bar.value + bar.visibleAmount >= bar.maximum - 30
+                } else false
+                SwingUtilities.invokeLater {
+                    revalidate()
+                    if (wasAtBottom && sp != null) {
+                        SwingUtilities.invokeLater {
+                            SwingUtilities.invokeLater {
+                                sp.verticalScrollBar.value = sp.verticalScrollBar.maximum
+                            }
+                        }
+                    }
+                }
             }
         }
+    }
+
+    /**
+     * Find the enclosing JScrollPane by walking up the parent chain.
+     */
+    private fun findEnclosingScrollPane(): javax.swing.JScrollPane? {
+        var p = parent
+        while (p != null) {
+            if (p is javax.swing.JScrollPane) return p
+            p = p.parent
+        }
+        return null
     }
 
     private fun determineWidth(): Int {
@@ -185,7 +217,20 @@ class DynamicHeightTextPane : JTextPane() {
                 val insets = parent.insets
                 (parent.width - insets.left - insets.right).coerceAtLeast(1)
             }
-            else -> HtmlPaneFactory.FALLBACK_WIDTH
+            else -> {
+                // Before the component is added to a realized hierarchy, try
+                // to find the enclosing scroll pane's viewport width as a
+                // better fallback than the hardcoded FALLBACK_WIDTH. This
+                // gives a much more accurate initial height estimate, avoiding
+                // the "narrow one-line bubble" issue when the chat window is
+                // full and a new message is added.
+                val sp = findEnclosingScrollPane()
+                if (sp != null && sp.viewport.width > 0) {
+                    sp.viewport.width
+                } else {
+                    HtmlPaneFactory.FALLBACK_WIDTH
+                }
+            }
         }
         com.aiagent.chat.debug.DebugLog.info("DynamicHeightTextPane", "determineWidth -> $w (this.width=$width, parent=${parent?.javaClass?.simpleName} parent.width=${parent?.width})")
         return w

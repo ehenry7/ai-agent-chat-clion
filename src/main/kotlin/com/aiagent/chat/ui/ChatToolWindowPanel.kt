@@ -216,12 +216,7 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                         conv.messageContainer.revalidate()
                         conv.messageContainer.repaint()
 
-                        SwingUtilities.invokeLater {
-                            SwingUtilities.invokeLater {
-                                val scrollBar = conv.scrollPane.verticalScrollBar
-                                scrollBar.value = scrollBar.maximum
-                            }
-                        }
+                        scrollToBottom(conv)
                     }
                 }
 
@@ -263,12 +258,7 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                 conv.messageContainer.add(conv.fillerComponent, conv.fillerGbc)
                 conv.messageContainer.revalidate()
                 conv.messageContainer.repaint()
-                SwingUtilities.invokeLater {
-                    SwingUtilities.invokeLater {
-                        val scrollBar = conv.scrollPane.verticalScrollBar
-                        scrollBar.value = scrollBar.maximum
-                    }
-                }
+                scrollToBottom(conv)
             }
         }
 
@@ -847,6 +837,26 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
         )
     }
 
+    /**
+     * Robustly scroll the conversation's scroll pane to the bottom.
+     * Uses multiple invokeLater passes because DynamicHeightTextPane may
+     * re-measure its height asynchronously after the initial layout,
+     * which changes the scroll maximum. Without enough passes, the view
+     * can end up stuck at a position that clips the newly added content.
+     */
+    private fun scrollToBottom(conv: ConversationTabPanel.Conversation) {
+        SwingUtilities.invokeLater {
+            SwingUtilities.invokeLater {
+                val bar = conv.scrollPane.verticalScrollBar
+                bar.value = bar.maximum
+                // Third pass: after revalidate from height correction settles
+                SwingUtilities.invokeLater {
+                    bar.value = bar.maximum
+                }
+            }
+        }
+    }
+
     private fun addMessageBubbleToActiveTab(
         role: String,
         text: String,
@@ -938,16 +948,7 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
             activeConv.messageContainer.repaint()
 
             // Scroll to bottom after the new component is laid out.
-            // Use invokeLater twice: first to let revalidate process, second
-            // to scroll after the scroll pane's internal layout updates the
-            // maximum scroll value. This ensures the full content of the
-            // newly added bubble (including its bottom) is visible.
-            SwingUtilities.invokeLater {
-                SwingUtilities.invokeLater {
-                    val scrollBar = activeConv.scrollPane.verticalScrollBar
-                    scrollBar.value = scrollBar.maximum
-                }
-            }
+            scrollToBottom(activeConv)
         }
     }
 
@@ -978,12 +979,7 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
         activeConv.messageContainer.revalidate()
         activeConv.messageContainer.repaint()
 
-        SwingUtilities.invokeLater {
-            SwingUtilities.invokeLater {
-                val scrollBar = activeConv.scrollPane.verticalScrollBar
-                scrollBar.value = scrollBar.maximum
-            }
-        }
+        scrollToBottom(activeConv)
     }
 
     private fun createErrorPanel(errorText: String): JComponent {

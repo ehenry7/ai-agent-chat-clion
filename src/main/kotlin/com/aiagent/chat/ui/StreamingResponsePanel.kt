@@ -184,6 +184,12 @@ class StreamingResponsePanel(
             if (parent is javax.swing.JScrollPane) {
                 val bar = parent.verticalScrollBar
                 bar.value = bar.maximum
+                // Extra pass for height correction from DynamicHeightTextPane
+                SwingUtilities.invokeLater {
+                    SwingUtilities.invokeLater {
+                        bar.value = bar.maximum
+                    }
+                }
                 break
             }
             parent = parent.parent
