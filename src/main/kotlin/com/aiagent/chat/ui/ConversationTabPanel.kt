@@ -81,23 +81,23 @@ class ConversationTabPanel : JBPanel<ConversationTabPanel>(BorderLayout()) {
         // Combined New Session + More panel with separator
         val combinedPanel = JPanel(FlowLayout(FlowLayout.LEFT, 2, 0)).apply {
             isOpaque = false
-            // New Session button (icon only, compact)
-            add(createIconButton(AllIcons.General.Add, "New Session") {
+            // New Session button (icon + text)
+            add(createTextIconButton(AllIcons.General.Add, "New", "New Session") {
                 onNewTab?.invoke()
             })
             // Separator
             add(JSeparator(SwingConstants.VERTICAL).apply {
                 preferredSize = Dimension(2, 20)
             })
-            // More Actions dropdown (icon only, compact)
-            add(createIconButton(createDropdownArrowIcon(), "More Actions") { source ->
+            // More Actions dropdown (icon + text)
+            add(createTextIconButton(createDropdownArrowIcon(), "More", "More Actions") { source ->
                 showMoreActionsPopup(source)
             })
         }
         buttonBar.add(combinedPanel)
 
-        // Menu button (icon only, compact)
-        buttonBar.add(createIconButton(createHamburgerIcon(), "Settings & Menu") { source ->
+        // Menu button (icon + text)
+        buttonBar.add(createTextIconButton(createHamburgerIcon(), "Menu", "Settings & Menu") { source ->
             onMenuClick?.invoke(source)
         })
 
