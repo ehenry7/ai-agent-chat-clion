@@ -68,7 +68,9 @@ object SlashCommands {
         "status" to Command("status", "Show agent and workspace diagnostics"),
         "init" to Command("init", "Analyze repository and create AGENTS.md"),
         "clear" to Command("clear", "Clear current conversation"),
-        "new" to Command("new", "Start new session")
+        "new" to Command("new", "Start new session"),
+        "logs" to Command("logs", "Show recent IDE log entries"),
+        "health" to Command("health", "Show runtime health diagnostics")
     )
 
     fun isLocalCommand(text: String): Boolean {

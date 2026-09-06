@@ -102,7 +102,9 @@ class EnhancedInputPanel(
     private var promptHistory = mutableListOf<String>()
     private var historyIndex = -1
 
-    private var slashPopup: com.intellij.openapi.ui.popup.JBPopup? = null
+    private var slashPopup: JWindow? = null
+    private var slashList: JList<String>? = null
+    private val slashListModel = DefaultListModel<String>()
 
     init {
         isOpaque = false
@@ -192,28 +194,53 @@ class EnhancedInputPanel(
         inputArea.addKeyListener(object : KeyAdapter() {
             override fun keyPressed(e: KeyEvent) {
                 // --- Slash command popup navigation ---
-                if (slashPopup?.isDisposed == false) {
+                if (slashPopup != null && slashPopup!!.isDisplayable) {
                     when (e.keyCode) {
                         KeyEvent.VK_ESCAPE -> {
                             e.consume()
-                            slashPopup?.cancel()
-                            slashPopup = null
+                            closeSlashPopup()
                             return
                         }
                         KeyEvent.VK_ENTER -> {
                             e.consume()
-                            // Close popup and execute the command directly
-                            slashPopup?.cancel()
-                            slashPopup = null
-                            handleSubmit()
+                            val list = slashList
+                            if (list != null && list.selectedIndex >= 0) {
+                                val selected = list.selectedValue
+                                closeSlashPopup()
+                                inputArea.text = selected.substringBefore(" -")
+                                inputArea.caretPosition = inputArea.text.length
+                                handleSubmit()
+                            } else {
+                                closeSlashPopup()
+                                handleSubmit()
+                            }
                             return
                         }
-                        KeyEvent.VK_UP, KeyEvent.VK_DOWN -> {
-                            // Let the popup handle arrow navigation
+                        KeyEvent.VK_UP -> {
+                            e.consume()
+                            val list = slashList
+                            if (list != null && list.model.size > 0) {
+                                val idx = list.selectedIndex
+                                if (idx > 0) list.selectedIndex = idx - 1
+                                else list.selectedIndex = list.model.size - 1
+                                list.ensureIndexIsVisible(list.selectedIndex)
+                            }
                             return
                         }
-                        // Backspace: let it propagate to the text area naturally
-                        // so chars are removed; keyReleased will update/close the popup
+                        KeyEvent.VK_DOWN -> {
+                            e.consume()
+                            val list = slashList
+                            if (list != null && list.model.size > 0) {
+                                val idx = list.selectedIndex
+                                if (idx < list.model.size - 1) list.selectedIndex = idx + 1
+                                else list.selectedIndex = 0
+                                list.ensureIndexIsVisible(list.selectedIndex)
+                            }
+                            return
+                        }
+                        KeyEvent.VK_LEFT, KeyEvent.VK_RIGHT -> {
+                            // Let cursor movement propagate; keyReleased will update/close popup
+                        }
                     }
                 }
 
@@ -251,9 +278,8 @@ class EnhancedInputPanel(
                 val text = inputArea.text
                 if (text.startsWith("/") && !text.contains(" ") && !text.contains("\n")) {
                     SwingUtilities.invokeLater { showOrUpdateSlashPopup(text) }
-                } else if (slashPopup?.isDisposed == false) {
-                    slashPopup?.cancel()
-                    slashPopup = null
+                } else {
+                    closeSlashPopup()
                 }
             }
         })
@@ -273,6 +299,15 @@ class EnhancedInputPanel(
             "EnhancedInputPanel",
             "handleSubmit: running=${isRunning()}, textLength=${text.length}, fileTags=${fileTags.size}"
         )
+
+        // Slash commands are always processed immediately, even when agent is running
+        if (text.startsWith("/") && !text.contains(" ")) {
+            inputArea.text = ""
+            DebugLog.info("EnhancedInputPanel", "Processing slash command immediately: $text")
+            onSubmit(text, fileTags.toList())
+            clearTags()
+            return
+        }
 
         if (isRunning()) {
             // Steer mode
@@ -314,8 +349,13 @@ class EnhancedInputPanel(
             .showUnderneathOf(inputArea)
     }
 
+    private fun closeSlashPopup() {
+        slashPopup?.dispose()
+        slashPopup = null
+        slashList = null
+    }
+
     private fun showOrUpdateSlashPopup(typedText: String) {
-        // Build list of matching commands from SlashCommands.BUILT_IN
         val query = typedText.removePrefix("/").lowercase()
         val allCommands = SlashCommands.BUILT_IN.values.map { cmd ->
             "/${cmd.name} - ${cmd.description}"
@@ -326,38 +366,78 @@ class EnhancedInputPanel(
             allCommands.filter { it.substringAfter("/").startsWith(query) }
         }
 
-        // If no matches, close any existing popup
         if (filtered.isEmpty()) {
-            if (slashPopup?.isDisposed == false) {
-                slashPopup?.cancel()
-                slashPopup = null
-            }
+            closeSlashPopup()
             return
         }
 
-        // If popup is already showing, just update the list
-        if (slashPopup?.isDisposed == false) {
-            // Close and recreate to update the filtered list
-            slashPopup?.cancel()
-            slashPopup = null
+        // Update the list model in-place if popup is already visible
+        if (slashPopup != null && slashPopup!!.isDisplayable && slashList != null) {
+            slashListModel.clear()
+            filtered.forEach { slashListModel.addElement(it) }
+            slashList!!.selectedIndex = 0
+            slashList!!.ensureIndexIsVisible(0)
+            return
         }
 
-        // Create new popup with filtered commands
-        val popup = JBPopupFactory.getInstance()
-            .createPopupChooserBuilder(filtered)
-            .setTitle("Slash Commands")
-            .setItemChosenCallback { selectedItem ->
-                // Extract the command name (e.g. "/help - Show..." -> "/help")
-                val cmdName = selectedItem.substringBefore(" -")
-                inputArea.text = cmdName
-                inputArea.caretPosition = cmdName.length
-                inputArea.requestFocusInWindow()
-            }
-            .setResizable(false)
-            .setMovable(false)
-            .createPopup()
+        // Create new popup
+        slashListModel.clear()
+        filtered.forEach { slashListModel.addElement(it) }
 
-        popup.showUnderneathOf(inputArea)
+        val list = JList(slashListModel).apply {
+            selectionMode = ListSelectionModel.SINGLE_SELECTION
+            selectedIndex = 0
+            cellRenderer = object : DefaultListCellRenderer() {
+                override fun getListCellRendererComponent(
+                    list: JList<*>?, value: Any?, index: Int, isSelected: Boolean, cellHasFocus: Boolean
+                ): java.awt.Component {
+                    super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus)
+                    border = JBUI.Borders.empty(4, 8)
+                    if (isSelected) {
+                        background = JBColor(0x3870B0, 0x2D5A8E)
+                        foreground = JBColor.WHITE
+                    }
+                    return this
+                }
+            }
+        }
+        slashList = list
+
+        val scrollPane = JBScrollPane(list).apply {
+            border = JBUI.Borders.empty()
+            preferredSize = Dimension(320, minOf(filtered.size * 28 + 2, 200))
+        }
+
+        val popup = JWindow(SwingUtilities.getWindowAncestor(inputArea)).apply {
+            contentPane.add(scrollPane, BorderLayout.CENTER)
+            setFocusableWindowState(false)
+            isAlwaysOnTop = true
+            type = java.awt.Window.Type.POPUP
+        }
+
+        // Mouse click selection
+        list.addMouseListener(object : MouseAdapter() {
+            override fun mouseClicked(e: MouseEvent) {
+                val idx = list.locationToIndex(e.point)
+                if (idx >= 0) {
+                    list.selectedIndex = idx
+                    val selected = list.selectedValue
+                    closeSlashPopup()
+                    inputArea.text = selected.substringBefore(" -")
+                    inputArea.caretPosition = inputArea.text.length
+                    inputArea.requestFocusInWindow()
+                    handleSubmit()
+                }
+            }
+        })
+
+        // Position popup below the text area
+        popup.pack()
+        val textLoc = inputArea.locationOnScreen
+        val popupX = textLoc.x
+        val popupY = textLoc.y + inputArea.height
+        popup.setLocation(popupX, popupY)
+        popup.isVisible = true
         slashPopup = popup
     }
 
