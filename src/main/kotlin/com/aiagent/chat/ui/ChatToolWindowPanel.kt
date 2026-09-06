@@ -1334,7 +1334,7 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                                 statusLabel.text = delta.text
                                 // Start thinking animation when a step status is shown
                                 if (delta.text.startsWith("[step")) {
-                                    thinkingIndicator.start()
+                                    thinkingIndicator.start("Thinking")
                                 }
                             }
                         }
@@ -1354,7 +1354,7 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                             addMessageBubbleToActiveTab("assistant", delta.text)
                         }
                         is AgentDelta.ToolOutput -> {
-                            SwingUtilities.invokeLater { thinkingIndicator.stop() }
+                            // Keep indicator running during tool execution
                             activeStreamingPanel?.let { panel ->
                                 val finalized = panel.finalize()
                                 activeStreamingPanel = null
@@ -1402,10 +1402,10 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
                                 statusLabel.text = "${delta.to.name.lowercase().replaceFirstChar { it.uppercase() }}: ${delta.reason}"
                                 // Start thinking animation when entering GENERATING state (e.g. after tools complete)
                                 // Stop it when leaving GENERATING state
-                                if (delta.to == AgentSessionState.GENERATING) {
-                                    thinkingIndicator.start()
-                                } else {
-                                    thinkingIndicator.stop()
+                                when (delta.to) {
+                                    AgentSessionState.GENERATING -> thinkingIndicator.start("Thinking")
+                                    AgentSessionState.EXECUTING_TOOLS -> thinkingIndicator.start("Executing")
+                                    else -> thinkingIndicator.stop()
                                 }
                             }
                         }
@@ -1510,8 +1510,8 @@ class ChatToolWindowPanel(private val project: Project) : JBPanel<ChatToolWindow
 }
 
 /**
- * Animated "thinking" indicator that shows cycling dots next to the status label
- * while waiting for a model response.
+ * Animated indicator that shows cycling dots and elapsed time next to the status label.
+ * Used both while waiting for a model response ("Thinking") and while executing tools ("Executing").
  */
 class ThinkingIndicator : JLabel() {
     private val frames = arrayOf(".", "..", "...")
@@ -1519,26 +1519,30 @@ class ThinkingIndicator : JLabel() {
     @Volatile
     private var running = false
     private var timer: javax.swing.Timer? = null
+    private var startTimeMs = 0L
+    private var mode = "Thinking"
 
     init {
         font = font.deriveFont(java.awt.Font.BOLD, 13f)
         foreground = JBColor(0x4A9EFF, 0x6BB6FF)
         isOpaque = false
         text = ""
-        preferredSize = Dimension(30, 16)
+        preferredSize = Dimension(120, 16)
     }
 
-    fun start() {
-        if (running) return
+    fun start(modeLabel: String = "Thinking") {
         running = true
+        mode = modeLabel
         frameIndex = 0
+        startTimeMs = System.currentTimeMillis()
         SwingUtilities.invokeLater {
-            text = frames[0]
+            text = mode + " " + frames[0] + " 0s"
             timer?.stop()
             timer = javax.swing.Timer(400) {
                 if (!running) return@Timer
                 frameIndex = (frameIndex + 1) % frames.size
-                text = frames[frameIndex]
+                val elapsedSec = (System.currentTimeMillis() - startTimeMs) / 1000
+                text = mode + " " + frames[frameIndex] + " " + elapsedSec + "s"
             }
             timer?.start()
         }

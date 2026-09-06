@@ -245,7 +245,7 @@ class EnhancedInputPanel(
                 }
 
                 when {
-                    e.keyCode == KeyEvent.VK_ENTER && !e.isShiftDown -> {
+                    e.keyCode == KeyEvent.VK_ENTER && e.isControlDown -> {
                         e.consume()
                         handleSubmit()
                     }

@@ -205,6 +205,15 @@ class ResponseMessagePanel(
      * - Bullet lists (- item)
      * - Tables (| col | col |)
      */
+    private fun formatInline(text: String): String {
+        var content = HtmlPaneFactory.insertWbr(text)
+        content = content.replace(Regex("\\*\\*([^*]+)\\*\\*"), "<b>$1</b>")
+        content = content.replace(Regex("\\*([^*]+)\\*"), "<i>$1</i>")
+        val codeColor = if (JBColor.isBright()) "#0066CC" else "#6CB6FF"
+        content = content.replace(Regex("`([^`]+)`"), "<code style='color: $codeColor; font-family: monospace;'>$1</code>")
+        return content
+    }
+
     private fun renderMarkdown(text: String?): String {
         if (text.isNullOrBlank()) return ""
         val escaped = text.replace("<", "&lt;").replace(">", "&gt;")
@@ -237,20 +246,14 @@ class ResponseMessagePanel(
                 }
 
                 when {
-                    tLine.startsWith("### ") -> sb.append("<h3 style='margin: 8px 0 4px 0; font-size: 13px;'>${tLine.substring(4)}</h3>")
-                    tLine.startsWith("## ") -> sb.append("<h2 style='margin: 8px 0 4px 0; font-size: 14px;'>${tLine.substring(3)}</h2>")
-                    tLine.startsWith("# ") -> sb.append("<h1 style='margin: 8px 0 4px 0; font-size: 16px;'>${tLine.substring(2)}</h1>")
-                    tLine.startsWith("- ") -> sb.append("<div style='margin: 2px 0;'>&#8226; ${tLine.substring(2)}</div>")
-                    tLine.startsWith("  - ") -> sb.append("<div style='margin: 2px 0 16px;'>&#8226; ${tLine.trim().substring(2)}</div>")
+                    tLine.startsWith("### ") -> sb.append("<h3 style='margin: 8px 0 4px 0; font-size: 13px;'>${formatInline(tLine.substring(4))}</h3>")
+                    tLine.startsWith("## ") -> sb.append("<h2 style='margin: 8px 0 4px 0; font-size: 14px;'>${formatInline(tLine.substring(3))}</h2>")
+                    tLine.startsWith("# ") -> sb.append("<h1 style='margin: 8px 0 4px 0; font-size: 16px;'>${formatInline(tLine.substring(2))}</h1>")
+                    tLine.startsWith("- ") -> sb.append("<div style='margin: 2px 0;'>&#8226; ${formatInline(tLine.substring(2))}</div>")
+                    tLine.startsWith("  - ") -> sb.append("<div style='margin: 2px 0 16px;'>&#8226; ${formatInline(tLine.trim().substring(2))}</div>")
                     tLine.isEmpty() -> { /* skip empty lines to reduce spacing */ }
                     else -> {
-                        var content = HtmlPaneFactory.insertWbr(line)
-                        // Inline formatting
-                        content = content.replace(Regex("\\*\\*([^*]+)\\*\\*"), "<b>$1</b>")
-                        content = content.replace(Regex("\\*([^*]+)\\*"), "<i>$1</i>")
-                        val codeColor = if (JBColor.isBright()) "#0066CC" else "#6CB6FF"
-                        content = content.replace(Regex("`([^`]+)`"), "<code style='color: $codeColor; font-family: monospace;'>$1</code>")
-                        sb.append("<div style='margin: 2px 0;'>$content</div>")
+                        sb.append("<div style='margin: 2px 0;'>${formatInline(line)}</div>")
                     }
                 }
             }
